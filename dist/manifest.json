@@ -1,0 +1,12 @@
+{
+  "short_name": "المعجم",
+  "name": "تطبيق المعجم - المعجم الفقهي واللغوي",
+  "description": "موسوعة المعاجم الفقهية واللغوية مع بحث ذكي وفهرسة كاملة وإمكانية الإضافة",
+  "start_url": ".",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0f172a",
+  "theme_color": "#0d9488",
+  "dir": "rtl",
+  "lang": "ar"
+}

@@ -1,0 +1,16 @@
+{
+  "appId": "com.almogam.fiqhi.app",
+  "appName": "المعجم",
+  "webDir": "dist",
+  "bundledWebRuntime": false,
+  "server": {
+    "androidScheme": "https"
+  },
+  "plugins": {
+    "SplashScreen": {
+      "launchShowDuration": 1500,
+      "backgroundColor": "#0D9488",
+      "showSpinner": false
+    }
+  }
+}
