@@ -567,17 +567,33 @@ html_template = f"""<!DOCTYPE html>
             </header>
           ` : ''}}
 
-          <main id="main-content" class="flex-1 max-w-lg w-full mx-auto px-3.5 pt-4 pb-28">
+          <main id="main-content" class="flex-1 max-w-lg w-full mx-auto px-3.5 pt-4 pb-36">
             ${{renderMainSection()}}
           </main>
 
-          <nav class="fixed bottom-0 inset-x-0 z-40 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-slate-200 dark:border-slate-800 shadow-2xl">
-            <div class="max-w-lg mx-auto px-2 py-2 grid grid-cols-5 gap-1 text-center">
-              <button onclick="switchTab('home')" class="py-2 rounded-2xl text-xs ${{state.activeTab === 'home' ? 'text-teal-700 dark:text-teal-400 bg-teal-50 dark:bg-teal-950/60 font-extrabold' : 'text-slate-500'}}">🏠 الرئيسية</button>
-              <button onclick="switchTab('dictionary')" class="py-2 rounded-2xl text-xs ${{state.activeTab === 'dictionary' ? 'text-teal-700 dark:text-teal-400 bg-teal-50 dark:bg-teal-950/60 font-extrabold' : 'text-slate-500'}}">📘 المعجم</button>
-              <button onclick="switchTab('fehrest')" class="py-2 rounded-2xl text-xs ${{state.activeTab === 'fehrest' ? 'text-teal-700 dark:text-teal-400 bg-teal-50 dark:bg-teal-950/60 font-extrabold' : 'text-slate-500'}}">🔤 الفهرست</button>
-              <button onclick="switchTab('bookmarks')" class="py-2 rounded-2xl text-xs ${{state.activeTab === 'bookmarks' ? 'text-teal-700 dark:text-teal-400 bg-teal-50 dark:bg-teal-950/60 font-extrabold' : 'text-slate-500'}}">★ المحفوظات</button>
-              <button onclick="switchTab('about')" class="py-2 rounded-2xl text-xs ${{state.activeTab === 'about' ? 'text-teal-700 dark:text-teal-400 bg-teal-50 dark:bg-teal-950/60 font-extrabold' : 'text-slate-500'}}">⚙️ الإعدادات</button>
+          <nav class="fixed bottom-0 inset-x-0 z-40 bg-white dark:bg-slate-900 border-t-2 border-slate-200 dark:border-slate-800 shadow-2xl" style="padding-bottom: env(safe-area-inset-bottom);">
+            <div class="max-w-lg mx-auto px-2 py-2.5 grid grid-cols-5 gap-1.5 text-center">
+              <button onclick="switchTab('home')" class="flex flex-col items-center justify-center py-3 px-1 rounded-2xl transition ${{state.activeTab === 'home' ? 'text-white bg-teal-600 shadow-md font-extrabold scale-[1.03]' : 'text-slate-600 dark:text-slate-300 font-bold'}}">
+                <span class="text-2xl mb-1 leading-none">🏠</span>
+                <span class="text-sm leading-tight">الرئيسية</span>
+              </button>
+              <button onclick="switchTab('dictionary')" class="flex flex-col items-center justify-center py-3 px-1 rounded-2xl transition ${{state.activeTab === 'dictionary' ? 'text-white bg-teal-600 shadow-md font-extrabold scale-[1.03]' : 'text-slate-600 dark:text-slate-300 font-bold'}}">
+                <span class="text-2xl mb-1 leading-none">📘</span>
+                <span class="text-sm leading-tight">المعجم</span>
+              </button>
+              <button onclick="switchTab('fehrest')" class="flex flex-col items-center justify-center py-3 px-1 rounded-2xl transition ${{state.activeTab === 'fehrest' ? 'text-white bg-teal-600 shadow-md font-extrabold scale-[1.03]' : 'text-slate-600 dark:text-slate-300 font-bold'}}">
+                <span class="text-2xl mb-1 leading-none">🔤</span>
+                <span class="text-sm leading-tight">الفهرست</span>
+              </button>
+              <button onclick="switchTab('bookmarks')" class="relative flex flex-col items-center justify-center py-3 px-1 rounded-2xl transition ${{state.activeTab === 'bookmarks' ? 'text-white bg-teal-600 shadow-md font-extrabold scale-[1.03]' : 'text-slate-600 dark:text-slate-300 font-bold'}}">
+                <span class="text-2xl mb-1 leading-none">★</span>
+                <span class="text-sm leading-tight">المحفوظات</span>
+                ${{state.bookmarks.length > 0 ? `<span class="absolute top-1.5 right-2.5 w-5 h-5 rounded-full bg-amber-500 text-white text-xs font-extrabold flex items-center justify-center shadow">${{state.bookmarks.length}}</span>` : ''}}
+              </button>
+              <button onclick="switchTab('about')" class="flex flex-col items-center justify-center py-3 px-1 rounded-2xl transition ${{state.activeTab === 'about' ? 'text-white bg-teal-600 shadow-md font-extrabold scale-[1.03]' : 'text-slate-600 dark:text-slate-300 font-bold'}}">
+                <span class="text-2xl mb-1 leading-none">⚙️</span>
+                <span class="text-sm leading-tight">الإعدادات</span>
+              </button>
             </div>
           </nav>
         </div>

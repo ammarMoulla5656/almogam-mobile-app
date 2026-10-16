@@ -628,57 +628,57 @@ export default function App() {
         )}
       </main>
 
-      {/* شريط التنقل السفلي (٥ خانات واضحة: الرئيسية، المعجم، الفهرست، المحفوظات، الإعدادات) */}
-      <nav className="fixed bottom-0 inset-x-0 z-40 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-slate-200 dark:border-slate-800 shadow-2xl">
-        <div className="max-w-lg mx-auto px-2 py-2 grid grid-cols-5 gap-1">
+      {/* شريط التنقل السفلي بحجم كبير وواضح جداً للموبايل */}
+      <nav className="fixed bottom-0 inset-x-0 z-40 bg-white dark:bg-slate-900 border-t-2 border-slate-200 dark:border-slate-800 shadow-2xl pb-[env(safe-area-inset-bottom)]">
+        <div className="max-w-lg mx-auto px-2 py-2.5 grid grid-cols-5 gap-1.5">
           <button
             onClick={() => setActiveTab('home')}
-            className={`flex flex-col items-center justify-center py-2 rounded-2xl transition ${
+            className={`flex flex-col items-center justify-center py-3 px-1 rounded-2xl transition ${
               activeTab === 'home'
-                ? 'text-teal-700 dark:text-teal-400 bg-teal-50 dark:bg-teal-950/60 font-extrabold'
-                : 'text-slate-500 dark:text-slate-400'
+                ? 'text-white bg-teal-600 shadow-md font-extrabold scale-[1.03]'
+                : 'text-slate-600 dark:text-slate-300 font-bold'
             }`}
           >
-            <Home className="w-5 h-5 mb-0.5" />
-            <span className="text-[11px]">الرئيسية</span>
+            <Home className="w-7 h-7 mb-1" />
+            <span className="text-sm leading-tight">الرئيسية</span>
           </button>
 
           <button
             onClick={() => setActiveTab('dictionary')}
-            className={`flex flex-col items-center justify-center py-2 rounded-2xl transition ${
+            className={`flex flex-col items-center justify-center py-3 px-1 rounded-2xl transition ${
               activeTab === 'dictionary'
-                ? 'text-teal-700 dark:text-teal-400 bg-teal-50 dark:bg-teal-950/60 font-extrabold'
-                : 'text-slate-500 dark:text-slate-400'
+                ? 'text-white bg-teal-600 shadow-md font-extrabold scale-[1.03]'
+                : 'text-slate-600 dark:text-slate-300 font-bold'
             }`}
           >
-            <BookOpen className="w-5 h-5 mb-0.5" />
-            <span className="text-[11px]">المعجم</span>
+            <BookOpen className="w-7 h-7 mb-1" />
+            <span className="text-sm leading-tight">المعجم</span>
           </button>
 
           <button
             onClick={() => setActiveTab('fehrest')}
-            className={`flex flex-col items-center justify-center py-2 rounded-2xl transition ${
+            className={`flex flex-col items-center justify-center py-3 px-1 rounded-2xl transition ${
               activeTab === 'fehrest'
-                ? 'text-teal-700 dark:text-teal-400 bg-teal-50 dark:bg-teal-950/60 font-extrabold'
-                : 'text-slate-500 dark:text-slate-400'
+                ? 'text-white bg-teal-600 shadow-md font-extrabold scale-[1.03]'
+                : 'text-slate-600 dark:text-slate-300 font-bold'
             }`}
           >
-            <ListFilter className="w-5 h-5 mb-0.5" />
-            <span className="text-[11px]">الفهرست</span>
+            <ListFilter className="w-7 h-7 mb-1" />
+            <span className="text-sm leading-tight">الفهرست</span>
           </button>
 
           <button
             onClick={() => setActiveTab('bookmarks')}
-            className={`relative flex flex-col items-center justify-center py-2 rounded-2xl transition ${
+            className={`relative flex flex-col items-center justify-center py-3 px-1 rounded-2xl transition ${
               activeTab === 'bookmarks'
-                ? 'text-teal-700 dark:text-teal-400 bg-teal-50 dark:bg-teal-950/60 font-extrabold'
-                : 'text-slate-500 dark:text-slate-400'
+                ? 'text-white bg-teal-600 shadow-md font-extrabold scale-[1.03]'
+                : 'text-slate-600 dark:text-slate-300 font-bold'
             }`}
           >
-            <Bookmark className="w-5 h-5 mb-0.5" />
-            <span className="text-[11px]">المحفوظات</span>
+            <Bookmark className="w-7 h-7 mb-1" />
+            <span className="text-sm leading-tight">المحفوظات</span>
             {bookmarks.length > 0 && (
-              <span className="absolute top-1 right-4 w-4 h-4 rounded-full bg-amber-500 text-white text-[10px] font-bold flex items-center justify-center">
+              <span className="absolute top-1.5 right-3 w-5 h-5 rounded-full bg-amber-500 text-white text-xs font-extrabold flex items-center justify-center shadow">
                 {bookmarks.length}
               </span>
             )}
@@ -686,14 +686,14 @@ export default function App() {
 
           <button
             onClick={() => setActiveTab('about')}
-            className={`flex flex-col items-center justify-center py-2 rounded-2xl transition ${
+            className={`flex flex-col items-center justify-center py-3 px-1 rounded-2xl transition ${
               activeTab === 'about'
-                ? 'text-teal-700 dark:text-teal-400 bg-teal-50 dark:bg-teal-950/60 font-extrabold'
-                : 'text-slate-500 dark:text-slate-400'
+                ? 'text-white bg-teal-600 shadow-md font-extrabold scale-[1.03]'
+                : 'text-slate-600 dark:text-slate-300 font-bold'
             }`}
           >
-            <Info className="w-5 h-5 mb-0.5" />
-            <span className="text-[11px]">الإعدادات</span>
+            <Info className="w-7 h-7 mb-1" />
+            <span className="text-sm leading-tight">الإعدادات</span>
           </button>
         </div>
       </nav>
