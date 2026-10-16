@@ -3,10 +3,12 @@
 import json
 import os
 
-with open('/mnt/d/almogam/src/data/dictionaries.json', 'r', encoding='utf-8') as f:
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+with open(os.path.join(BASE_DIR, 'src/data/dictionaries.json'), 'r', encoding='utf-8') as f:
     db_json_str = f.read()
 
-with open('/mnt/d/almogam/src/utils/smartSearch.js', 'r', encoding='utf-8') as f:
+with open(os.path.join(BASE_DIR, 'src/utils/smartSearch.js'), 'r', encoding='utf-8') as f:
     smart_search_code = f.read().replace('export function ', 'function ')
 
 html_template = f"""<!DOCTYPE html>
@@ -490,8 +492,9 @@ html_template = f"""<!DOCTYPE html>
 </html>
 """
 
-os.makedirs('/mnt/d/almogam/dist', exist_ok=True)
-with open('/mnt/d/almogam/dist/index.html', 'w', encoding='utf-8') as f:
+dist_dir = os.path.join(BASE_DIR, 'dist')
+os.makedirs(dist_dir, exist_ok=True)
+with open(os.path.join(dist_dir, 'index.html'), 'w', encoding='utf-8') as f:
     f.write(html_template)
 
-print("Generated mobile user-only bundle at /mnt/d/almogam/dist/index.html")
+print("Generated mobile user-only bundle at dist/index.html")

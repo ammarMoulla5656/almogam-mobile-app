@@ -17,17 +17,17 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Setup Java JDK 17 for Android
+      - name: Setup Java JDK 21 for Capacitor Android
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
-          java-version: '17'
+          java-version: '21'
 
       - name: Install dependencies & sync Capacitor Android
         run: |
           npm install
           python3 build_dist.py
-          npx cap add android || npx cap sync android
+          npx cap sync android
 
       - name: Build Android APK
         working-directory: ./android
