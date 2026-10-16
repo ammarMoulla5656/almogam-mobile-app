@@ -390,10 +390,7 @@ html_template = f"""<!DOCTYPE html>
                   <span class="text-xs font-bold px-3 py-1 rounded-xl bg-teal-100/80 dark:bg-teal-950/80 text-teal-800 dark:text-teal-300">باب حرف ${{escapeHtml(entry.letter)}}</span>
                   ${{refMatch ? `<button onclick="jumpToTerm('${{escapeHtml(refMatch[1])}}', event)" class="text-xs font-bold px-3 py-1 rounded-xl bg-amber-100 dark:bg-amber-950/70 text-amber-800 dark:text-amber-300">↗ راجع: ${{escapeHtml(refMatch[1])}}</button>` : ''}}
                 </div>
-                <div class="grid grid-cols-2 gap-3">
-                  <button onclick="copyEntry('${{entry.id}}', event)" class="py-3.5 rounded-2xl bg-teal-600 hover:bg-teal-700 active:scale-95 text-white text-sm font-extrabold shadow-md transition">📋 نسخ الجواب</button>
-                  <button onclick="shareEntry('${{entry.id}}', event)" class="py-3.5 rounded-2xl bg-slate-800 dark:bg-slate-700 hover:bg-slate-900 active:scale-95 text-white text-sm font-extrabold shadow-md transition">📤 مشاركة</button>
-                </div>
+                <button onclick="copyEntry('${{entry.id}}', event)" class="w-full py-3.5 rounded-2xl bg-teal-600 hover:bg-teal-700 active:scale-95 text-white text-sm font-extrabold shadow-md transition">📋 نسخ الجواب</button>
               </div>
             ` : ''}}
           </div>
@@ -410,74 +407,30 @@ html_template = f"""<!DOCTYPE html>
       `;
     }}
 
-    function renderHomeResultsArea() {{
-      const {{ currentDict, filtered, bookmarksSet }} = getFilteredData();
-      if (state.searchQuery.trim()) {{
-        return `
-          <div class="space-y-3">
-            <div class="flex items-center justify-between px-1 text-sm font-extrabold text-teal-700 dark:text-teal-400">
-              <span>نتائج البحث في ${{escapeHtml(currentDict.category)}} (${{filtered.length}}):</span>
-            </div>
-            ${{renderCardsHtml(filtered, bookmarksSet)}}
-          </div>
-        `;
-      }}
-
-      return `
-        <div class="space-y-3">
-          ${{state.allDictionaries.map(dict => `
-            <button onclick="openDictionaryFull('${{dict.id}}')" class="w-full p-5 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 shadow-sm hover:border-teal-500 active:scale-[0.99] transition text-right flex items-center justify-between gap-4">
-              <div class="space-y-1">
-                <span class="inline-block px-3 py-1 rounded-xl bg-teal-50 dark:bg-teal-950/70 text-teal-700 dark:text-teal-300 text-xs font-extrabold">${{escapeHtml(dict.category)}}</span>
-                <h3 class="text-xl font-extrabold text-slate-900 dark:text-white">${{escapeHtml(dict.title)}}</h3>
-                <p class="text-sm text-slate-500 dark:text-slate-400 font-bold">${{escapeHtml(dict.author)}}</p>
-              </div>
-              <div class="w-12 h-12 rounded-2xl bg-teal-600 text-white flex items-center justify-center font-extrabold text-lg shrink-0 shadow-md">←</div>
-            </button>
-          `).join('')}}
-        </div>
-      `;
-    }}
-
     function renderMainSection() {{
       const {{ currentDict, filtered, bookmarksSet }} = getFilteredData();
       const currentFont = FONT_STYLES[state.fontSize] || FONT_STYLES.md;
 
-      // ١. الواجهة الرئيسية: اختيار المعجم والبحث الفوري بنفس الصفحة بدون كلام إضافي
+      // ١. الواجهة الرئيسية بدون شريط بحث
       if (state.activeTab === 'home') {{
         return `
           <div class="space-y-4">
-            <div class="rounded-3xl bg-gradient-to-br from-teal-800 via-teal-700 to-emerald-800 dark:from-slate-900 dark:to-teal-950 text-white p-5 shadow-xl border border-teal-600/30 space-y-4">
-              <div class="text-center space-y-1">
-                <h1 class="text-3xl font-extrabold">المعجم</h1>
-                <p class="text-sm text-teal-100/90 font-medium">${{escapeHtml(currentDict.title)}}</p>
-              </div>
-
-              <!-- اختيار التبويب المراد البحث فيه -->
-              <div class="grid grid-cols-3 gap-2 p-1.5 rounded-2xl bg-black/25 border border-white/10">
-                ${{state.allDictionaries.map(d => `
-                  <button onclick="selectDictionaryOnHome('${{d.id}}')" class="py-3 px-2 rounded-xl text-sm font-extrabold text-center transition-all ${{d.id === currentDict.id ? 'bg-white text-teal-900 shadow-md scale-[1.02]' : 'text-teal-50/90 hover:bg-white/10'}}">
-                    ${{escapeHtml(d.category)}}
-                  </button>
-                `).join('')}}
-              </div>
-
-              <!-- حقل البحث الفوري في الواجهة الرئيسية -->
-              <div class="relative flex items-center">
-                <input
-                  id="home-search-input"
-                  type="text"
-                  value="${{escapeHtml(state.searchQuery)}}"
-                  oninput="onHomeSearchInput(this.value)"
-                  placeholder="🔍 ابحث الآن في ${{escapeHtml(currentDict.category)}}..."
-                  class="w-full px-5 py-4 rounded-2xl bg-white text-slate-900 placeholder-slate-400 font-extrabold text-base shadow-lg focus:outline-none focus:ring-2 focus:ring-amber-400"
-                />
-                ${{state.searchQuery ? `<button onclick="clearSearch()" class="absolute left-3.5 px-2.5 py-1 rounded-full bg-slate-200 text-slate-800 text-xs font-bold">✕</button>` : ''}}
-              </div>
+            <div class="rounded-3xl bg-gradient-to-br from-teal-800 via-teal-700 to-emerald-800 dark:from-slate-900 dark:to-teal-950 text-white p-6 shadow-xl border border-teal-600/30 text-center space-y-1.5">
+              <h1 class="text-3xl font-extrabold">المعجم</h1>
+              <p class="text-sm text-teal-100/90 font-medium">${{escapeHtml(currentDict.title)}}</p>
             </div>
 
-            <div id="home-results-area">
-              ${{renderHomeResultsArea()}}
+            <div class="space-y-3">
+              ${{state.allDictionaries.map(dict => `
+                <button onclick="openDictionaryFull('${{dict.id}}')" class="w-full p-5 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 shadow-sm hover:border-teal-500 active:scale-[0.99] transition text-right flex items-center justify-between gap-4">
+                  <div class="space-y-1">
+                    <span class="inline-block px-3 py-1 rounded-xl bg-teal-50 dark:bg-teal-950/70 text-teal-700 dark:text-teal-300 text-xs font-extrabold">${{escapeHtml(dict.category)}}</span>
+                    <h3 class="text-xl font-extrabold text-slate-900 dark:text-white">${{escapeHtml(dict.title)}}</h3>
+                    <p class="text-sm text-slate-500 dark:text-slate-400 font-bold">${{escapeHtml(dict.author)}}</p>
+                  </div>
+                  <div class="w-12 h-12 rounded-2xl bg-teal-600 text-white flex items-center justify-center font-extrabold text-lg shrink-0 shadow-md">←</div>
+                </button>
+              `).join('')}}
             </div>
           </div>
         `;

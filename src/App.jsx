@@ -341,23 +341,13 @@ export default function App() {
                     )}
                   </div>
 
-                  <div className="grid grid-cols-2 gap-3">
-                    <button
-                      onClick={(e) => handleCopy(entry, e)}
-                      className="flex items-center justify-center gap-2 py-3.5 rounded-2xl bg-teal-600 hover:bg-teal-700 active:scale-95 text-white text-sm font-extrabold shadow-md transition"
-                    >
-                      <Copy className="w-4 h-4" />
-                      <span>نسخ الجواب</span>
-                    </button>
-
-                    <button
-                      onClick={(e) => handleShare(entry, e)}
-                      className="flex items-center justify-center gap-2 py-3.5 rounded-2xl bg-slate-800 dark:bg-slate-700 hover:bg-slate-900 active:scale-95 text-white text-sm font-extrabold shadow-md transition"
-                    >
-                      <Share2 className="w-4 h-4" />
-                      <span>مشاركة</span>
-                    </button>
-                  </div>
+                  <button
+                    onClick={(e) => handleCopy(entry, e)}
+                    className="w-full flex items-center justify-center gap-2 py-3.5 rounded-2xl bg-teal-600 hover:bg-teal-700 active:scale-95 text-white text-sm font-extrabold shadow-md transition"
+                  >
+                    <Copy className="w-4 h-4" />
+                    <span>نسخ الجواب</span>
+                  </button>
                 </div>
               )}
             </div>
@@ -447,96 +437,44 @@ export default function App() {
 
       {/* المحتوى الرئيسي */}
       <main className="flex-1 max-w-lg w-full mx-auto px-3.5 pt-4 pb-28">
-        {/* ١. الواجهة الرئيسية: اختيار التبويب (معجم فقهي / أصولي / لغوي) والبحث الفوري بنفس الشاشة */}
+        {/* ١. الواجهة الرئيسية: عرض المعاجم الثلاثة بشكل نظيف ومبسط بدون شريط بحث */}
         {activeTab === 'home' && (
           <div className="space-y-4">
-            <div className="rounded-3xl bg-gradient-to-br from-teal-800 via-teal-700 to-emerald-800 dark:from-slate-900 dark:to-teal-950 text-white p-5 shadow-xl border border-teal-600/30 space-y-4">
-              <div className="text-center space-y-1">
-                <h1 className="text-3xl font-extrabold">المعجم</h1>
-                <p className="text-sm text-teal-100/90 font-medium">
-                  {currentDict.title}
-                </p>
-              </div>
-
-              {/* اختيار التبويب المراد البحث فيه مباشرة */}
-              <div className="grid grid-cols-3 gap-2 p-1.5 rounded-2xl bg-black/25 border border-white/10">
-                {allDictionaries.map((dict) => {
-                  const isSelected = dict.id === currentDict.id;
-                  return (
-                    <button
-                      key={dict.id}
-                      onClick={() => setSelectedDictId(dict.id)}
-                      className={`py-3 px-2 rounded-xl text-sm font-extrabold text-center transition-all ${
-                        isSelected
-                          ? 'bg-white text-teal-900 shadow-md scale-[1.02]'
-                          : 'text-teal-50/90 hover:bg-white/10'
-                      }`}
-                    >
-                      {dict.category}
-                    </button>
-                  );
-                })}
-              </div>
-
-              {/* حقل البحث الفوري في الواجهة الرئيسية يبحث ويعرض النتائج مباشرة تحت البحث */}
-              <div className="relative flex items-center">
-                <Search className="w-5 h-5 text-teal-700 absolute right-4 pointer-events-none" />
-                <input
-                  type="text"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder={`ابحث الآن في ${currentDict.category}...`}
-                  className="w-full pr-12 pl-12 py-4 rounded-2xl bg-white text-slate-900 placeholder-slate-400 font-extrabold text-base shadow-lg focus:outline-none focus:ring-2 focus:ring-amber-400"
-                />
-                {searchQuery && (
-                  <button
-                    onClick={() => setSearchQuery('')}
-                    className="absolute left-3.5 p-1.5 text-slate-600 hover:text-slate-900 bg-slate-200 rounded-full"
-                  >
-                    <X className="w-4 h-4" />
-                  </button>
-                )}
-              </div>
+            <div className="rounded-3xl bg-gradient-to-br from-teal-800 via-teal-700 to-emerald-800 dark:from-slate-900 dark:to-teal-950 text-white p-6 shadow-xl border border-teal-600/30 text-center space-y-1.5">
+              <h1 className="text-3xl font-extrabold">المعجم</h1>
+              <p className="text-sm text-teal-100/90 font-medium">
+                {currentDict.title}
+              </p>
             </div>
 
-            {/* إذا كتب المستخدم في بحث الواجهة الرئيسية تظهر النتائج فوراً هنا، وإلا تظهر أقسام البرنامج */}
-            {searchQuery.trim() ? (
-              <div className="space-y-3">
-                <div className="flex items-center justify-between px-1 text-sm font-extrabold text-teal-700 dark:text-teal-400">
-                  <span>نتائج البحث في {currentDict.category} ({filteredEntries.length}):</span>
-                </div>
-                {renderEntryCards(filteredEntries)}
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {allDictionaries.map((dict) => (
-                  <button
-                    key={dict.id}
-                    onClick={() => {
-                      setSelectedDictId(dict.id);
-                      setSelectedLetter('الكل');
-                      setActiveTab('dictionary');
-                    }}
-                    className="w-full p-5 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 shadow-sm hover:border-teal-500 active:scale-[0.99] transition text-right flex items-center justify-between gap-4"
-                  >
-                    <div className="space-y-1">
-                      <span className="inline-block px-3 py-1 rounded-xl bg-teal-50 dark:bg-teal-950/70 text-teal-700 dark:text-teal-300 text-xs font-extrabold">
-                        {dict.category}
-                      </span>
-                      <h3 className="text-xl font-extrabold text-slate-900 dark:text-white">
-                        {dict.title}
-                      </h3>
-                      <p className="text-sm text-slate-500 dark:text-slate-400 font-bold">
-                        {dict.author}
-                      </p>
-                    </div>
-                    <div className="w-12 h-12 rounded-2xl bg-teal-600 text-white flex items-center justify-center font-extrabold text-lg shrink-0 shadow-md">
-                      ←
-                    </div>
-                  </button>
-                ))}
-              </div>
-            )}
+            <div className="space-y-3">
+              {allDictionaries.map((dict) => (
+                <button
+                  key={dict.id}
+                  onClick={() => {
+                    setSelectedDictId(dict.id);
+                    setSelectedLetter('الكل');
+                    setActiveTab('dictionary');
+                  }}
+                  className="w-full p-5 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 shadow-sm hover:border-teal-500 active:scale-[0.99] transition text-right flex items-center justify-between gap-4"
+                >
+                  <div className="space-y-1">
+                    <span className="inline-block px-3 py-1 rounded-xl bg-teal-50 dark:bg-teal-950/70 text-teal-700 dark:text-teal-300 text-xs font-extrabold">
+                      {dict.category}
+                    </span>
+                    <h3 className="text-xl font-extrabold text-slate-900 dark:text-white">
+                      {dict.title}
+                    </h3>
+                    <p className="text-sm text-slate-500 dark:text-slate-400 font-bold">
+                      {dict.author}
+                    </p>
+                  </div>
+                  <div className="w-12 h-12 rounded-2xl bg-teal-600 text-white flex items-center justify-center font-extrabold text-lg shrink-0 shadow-md">
+                    ←
+                  </div>
+                </button>
+              ))}
+            </div>
           </div>
         )}
 
