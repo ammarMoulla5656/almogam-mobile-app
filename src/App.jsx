@@ -13,6 +13,7 @@ import {
   Info,
   Home,
   ArrowUpRight,
+  ListFilter,
   Type
 } from 'lucide-react';
 import initialData from './data/dictionaries.json';
@@ -56,6 +57,25 @@ const ARABIC_CHAPTERS = [
   { letter: 'الياء', short: 'ي' }
 ];
 
+// مقاسات الخط المباشرة (بالبيكسل) لضمان تغير حجم الخط فعلياً في كل البطاقات والشروحات
+const FONT_STYLES = {
+  sm: {
+    termSize: '18px',
+    defSize: '16px',
+    lineHeight: '1.75'
+  },
+  md: {
+    termSize: '22px',
+    defSize: '20px',
+    lineHeight: '1.9'
+  },
+  lg: {
+    termSize: '26px',
+    defSize: '24px',
+    lineHeight: '2.05'
+  }
+};
+
 export default function App() {
   const [darkMode, setDarkMode] = useState(() => {
     const saved = localStorage.getItem(STORAGE_KEYS.THEME);
@@ -74,8 +94,10 @@ export default function App() {
   }, [darkMode]);
 
   const [fontSize, setFontSize] = useState(() => {
-    return localStorage.getItem(STORAGE_KEYS.FONT_SIZE) || 'lg';
+    return localStorage.getItem(STORAGE_KEYS.FONT_SIZE) || 'md';
   });
+
+  const currentFont = FONT_STYLES[fontSize] || FONT_STYLES.md;
 
   const [bookmarks, setBookmarks] = useState(() => {
     try {
@@ -105,13 +127,13 @@ export default function App() {
     }));
   }, []);
 
-  // التبويبات المبسطة: 'home' (الرئيسية) | 'dictionary' (المعاجم) | 'bookmarks' (المحفوظات) | 'about' (عن المعجم والثيم)
+  // التبويبات: 'home' (الرئيسية) | 'dictionary' (المعجم) | 'fehrest' (الفهرست) | 'bookmarks' (المحفوظات) | 'about' (الإعدادات والكتاب)
   const [activeTab, setActiveTab] = useState('home');
   const [selectedDictId, setSelectedDictId] = useState('fiqhi_main');
   const [selectedLetter, setSelectedLetter] = useState('الكل');
   const [searchQuery, setSearchQuery] = useState('');
   const [expandedIds, setExpandedIds] = useState(() => new Set(['fiqh_1']));
-  const [visibleCount, setVisibleCount] = useState(15);
+  const [visibleCount, setVisibleCount] = useState(12);
   const [toastMsg, setToastMsg] = useState(null);
 
   const showToast = useCallback((msg) => {
@@ -126,13 +148,13 @@ export default function App() {
   }, [allDictionaries, selectedDictId]);
 
   useEffect(() => {
-    setVisibleCount(15);
+    setVisibleCount(12);
   }, [searchQuery, selectedLetter, selectedDictId, activeTab]);
 
   const filteredEntries = useMemo(() => {
     if (!currentDict) return [];
     return smartSearchEntries(currentDict.preparedEntries, searchQuery, {
-      letterFilter: selectedLetter,
+      letterFilter: activeTab === 'home' ? 'الكل' : selectedLetter,
       searchScope: 'all',
       onlyBookmarks: activeTab === 'bookmarks',
       bookmarksSet
@@ -151,7 +173,6 @@ export default function App() {
     });
   }, []);
 
-  // نسخ المصطلح والجواب بدون أرقام صفحات
   const handleCopy = useCallback(async (entry, e) => {
     if (e) e.stopPropagation();
     const formatted = `📘 ${entry.term}\n\n${entry.definition}\n\n— (${currentDict.category} - تطبيق المعجم)`;
@@ -173,18 +194,15 @@ export default function App() {
     }
   }, [currentDict, showToast]);
 
-  // مشاركة المصطلح والجواب عبر نافذة مشاركة أندرويد الأصلية (Native Share Sheet)
   const handleShare = useCallback(async (entry, e) => {
     if (e) e.stopPropagation();
     const title = `المعجم: ${entry.term}`;
     const formatted = `📘 ${entry.term}\n\n${entry.definition}\n\n— (${currentDict.category} - تطبيق المعجم)`;
 
-    // 1. الجسر الأصلي للأندرويد (MainActivity.java -> AndroidShare)
     if (window.AndroidShare && typeof window.AndroidShare.share === 'function') {
       window.AndroidShare.share(title, formatted);
       return;
     }
-    // 2. إضافة Capacitor Share الرسمية إن توفرت
     if (window.Capacitor?.Plugins?.Share) {
       try {
         await window.Capacitor.Plugins.Share.share({
@@ -194,16 +212,15 @@ export default function App() {
         });
         return;
       } catch {
-        // user cancelled or error
+        return;
       }
     }
-    // 3. Web Share API القياسية
     if (navigator.share) {
       try {
         await navigator.share({ title, text: formatted });
         return;
       } catch {
-        // user cancelled
+        return;
       }
     }
     await handleCopy(entry);
@@ -213,13 +230,151 @@ export default function App() {
     if (e) e.stopPropagation();
     const cleaned = refTerm.replace(/[«»"()]/g, '').trim();
     setSelectedLetter('الكل');
-    setActiveTab('dictionary');
     setSearchQuery(cleaned);
     showToast(`البحث عن: ${cleaned}`);
   }, [showToast]);
 
-  const fontSizeClass =
-    fontSize === 'sm' ? 'text-base leading-relaxed' : fontSize === 'lg' ? 'text-xl leading-loose' : 'text-lg leading-relaxed';
+  // دالة عرض البوكسات المشتركة بين البحث في الواجهة الرئيسية وشاشة المعجم
+  const renderEntryCards = (entriesList) => {
+    if (entriesList.length === 0) {
+      return (
+        <div className="bg-white dark:bg-slate-900 rounded-3xl p-10 text-center border border-slate-200 dark:border-slate-800 shadow-sm my-3">
+          <Search className="w-12 h-12 mx-auto text-slate-300 dark:text-slate-600 mb-3" />
+          <h3 className="text-lg font-extrabold text-slate-800 dark:text-slate-200">
+            {activeTab === 'bookmarks' ? 'لا توجد مصطلحات محفوظة بعد' : 'لا توجد نتائج مطابقة'}
+          </h3>
+        </div>
+      );
+    }
+
+    return (
+      <div className="space-y-3.5">
+        {entriesList.slice(0, visibleCount).map((entry) => {
+          const isExpanded = expandedIds.has(entry.id);
+          const isBookmarked = bookmarksSet.has(entry.id);
+          const refMatch = entry.definition.match(/راجع\s+(?:لفظ|كلمة)?\s*[«"(\[]?([^»")\].،]{2,25})[»")\]]?/);
+
+          return (
+            <div
+              key={entry.id}
+              onClick={() => toggleCard(entry.id)}
+              className={`rounded-3xl transition-all duration-200 cursor-pointer border ${
+                isExpanded
+                  ? 'bg-white dark:bg-slate-900 border-teal-500 shadow-lg ring-2 ring-teal-500/20'
+                  : 'bg-white dark:bg-slate-900/90 border-slate-200/90 dark:border-slate-800 shadow-sm active:scale-[0.99]'
+              }`}
+            >
+              <div className="p-5 flex items-center justify-between gap-3">
+                <div className="flex items-center gap-3.5 min-w-0">
+                  <div
+                    className={`w-12 h-12 rounded-2xl flex items-center justify-center font-extrabold text-lg shrink-0 transition-colors ${
+                      isExpanded
+                        ? 'bg-teal-600 text-white shadow-md'
+                        : 'bg-teal-50 dark:bg-slate-800 text-teal-700 dark:text-teal-400 border border-teal-200/60 dark:border-slate-700'
+                    }`}
+                  >
+                    {entry.term.replace(/^ال/, '').charAt(0) || 'أ'}
+                  </div>
+
+                  <div className="min-w-0">
+                    <h2
+                      style={{ fontSize: currentFont.termSize }}
+                      className="font-extrabold text-slate-900 dark:text-white leading-snug"
+                    >
+                      {entry.term}
+                    </h2>
+                    {!isExpanded && (
+                      <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                        باب {entry.letter}
+                      </p>
+                    )}
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    onClick={(e) => toggleBookmark(entry.id, e)}
+                    className={`p-2.5 rounded-2xl transition ${
+                      isBookmarked
+                        ? 'text-amber-500 bg-amber-50 dark:bg-amber-950/40'
+                        : 'text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
+                    }`}
+                  >
+                    <Bookmark className={`w-5 h-5 ${isBookmarked ? 'fill-current' : ''}`} />
+                  </button>
+
+                  <div
+                    className={`w-8 h-8 rounded-full flex items-center justify-center transition-transform duration-200 ${
+                      isExpanded ? 'rotate-180 text-teal-600 dark:text-teal-400' : 'text-slate-400'
+                    }`}
+                  >
+                    <ChevronDown className="w-5 h-5" />
+                  </div>
+                </div>
+              </div>
+
+              {isExpanded && (
+                <div
+                  onClick={(e) => e.stopPropagation()}
+                  className="px-5 pb-5 pt-2 border-t border-slate-100 dark:border-slate-800/80 bg-slate-50/60 dark:bg-slate-900/50 rounded-b-3xl cursor-auto select-text"
+                >
+                  <p
+                    style={{ fontSize: currentFont.defSize, lineHeight: currentFont.lineHeight }}
+                    className="font-serif text-slate-800 dark:text-slate-100 bg-white dark:bg-slate-950/80 p-4 rounded-2xl border border-slate-200/70 dark:border-slate-800 shadow-inner"
+                  >
+                    {entry.definition}
+                  </p>
+
+                  <div className="flex flex-wrap items-center gap-2 mt-3 mb-4">
+                    <span className="text-xs font-bold px-3 py-1 rounded-xl bg-teal-100/80 dark:bg-teal-950/80 text-teal-800 dark:text-teal-300">
+                      باب حرف {entry.letter}
+                    </span>
+
+                    {refMatch && (
+                      <button
+                        onClick={(e) => jumpToTerm(refMatch[1], e)}
+                        className="text-xs font-bold px-3 py-1 rounded-xl bg-amber-100 dark:bg-amber-950/70 text-amber-800 dark:text-amber-300 flex items-center gap-1"
+                      >
+                        <ArrowUpRight className="w-3.5 h-3.5" />
+                        <span>راجع: {refMatch[1]}</span>
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <button
+                      onClick={(e) => handleCopy(entry, e)}
+                      className="flex items-center justify-center gap-2 py-3.5 rounded-2xl bg-teal-600 hover:bg-teal-700 active:scale-95 text-white text-sm font-extrabold shadow-md transition"
+                    >
+                      <Copy className="w-4 h-4" />
+                      <span>نسخ الجواب</span>
+                    </button>
+
+                    <button
+                      onClick={(e) => handleShare(entry, e)}
+                      className="flex items-center justify-center gap-2 py-3.5 rounded-2xl bg-slate-800 dark:bg-slate-700 hover:bg-slate-900 active:scale-95 text-white text-sm font-extrabold shadow-md transition"
+                    >
+                      <Share2 className="w-4 h-4" />
+                      <span>مشاركة</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })}
+
+        {entriesList.length > visibleCount && (
+          <button
+            onClick={() => setVisibleCount((prev) => prev + 12)}
+            className="w-full py-4 rounded-3xl bg-white dark:bg-slate-900 text-teal-700 dark:text-teal-400 font-extrabold text-base border border-slate-200 dark:border-slate-800 shadow-sm"
+          >
+            عرض المزيد
+          </button>
+        )}
+      </div>
+    );
+  };
 
   return (
     <div className="min-h-screen flex flex-col bg-slate-100 dark:bg-slate-950 text-slate-900 dark:text-slate-100 transition-colors duration-200 select-none">
@@ -230,11 +385,10 @@ export default function App() {
         </div>
       )}
 
-      {/* الهيدر المبسط والكبير (يظهر في شاشات المعاجم والمحفوظات بدون أي زحمة علوية) */}
+      {/* الهيدر في شاشة المعجم والمحفوظات (بدون شريط الحروف العلوي الملغى) */}
       {(activeTab === 'dictionary' || activeTab === 'bookmarks') && (
         <header className="sticky top-0 z-30 bg-gradient-to-l from-teal-800 via-teal-700 to-emerald-800 dark:from-slate-900 dark:via-slate-900 dark:to-teal-950 text-white shadow-lg">
-          <div className="max-w-lg mx-auto px-3.5 pt-3.5 pb-3 space-y-3">
-            {/* التابات الثلاثة بحجم كبير وواضح جداً */}
+          <div className="max-w-lg mx-auto px-3.5 pt-3.5 pb-3.5 space-y-3">
             <div className="grid grid-cols-3 gap-2 p-1.5 rounded-2xl bg-black/25 dark:bg-slate-950/70 border border-white/10">
               {allDictionaries.map((dict) => {
                 const isSelected = dict.id === currentDict.id;
@@ -257,15 +411,14 @@ export default function App() {
               })}
             </div>
 
-            {/* شريط البحث الذكي بحجم كبير ومبسط */}
             <div className="relative flex items-center">
               <Search className="w-5 h-5 text-teal-200 absolute right-4 pointer-events-none" />
               <input
                 type="text"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="ابحث عن أي كلمة أو معنى أو محتوى..."
-                className="w-full pr-12 pl-12 py-3.5 rounded-2xl bg-white/15 dark:bg-slate-800/95 text-white placeholder-teal-100/80 dark:placeholder-slate-400 border border-white/25 dark:border-slate-700 focus:outline-none focus:ring-2 focus:ring-amber-400 text-base font-medium backdrop-blur-md transition"
+                placeholder={`ابحث في ${currentDict.category}...`}
+                className="w-full pr-12 pl-12 py-3.5 rounded-2xl bg-white/15 dark:bg-slate-800/95 text-white placeholder-teal-100/85 border border-white/25 focus:outline-none focus:ring-2 focus:ring-amber-400 text-base font-bold"
               />
               {searchQuery && (
                 <button
@@ -276,292 +429,166 @@ export default function App() {
                 </button>
               )}
             </div>
-          </div>
 
-          {/* شريط الحروف المبسط والواضح */}
-          <div className="bg-teal-900/60 dark:bg-slate-900/95 border-t border-white/10">
-            <div className="max-w-lg mx-auto px-3 py-2.5 flex items-center gap-2 overflow-x-auto no-scrollbar">
-              {ARABIC_CHAPTERS.map((chap) => {
-                const active = selectedLetter === chap.letter;
-                return (
-                  <button
-                    key={chap.letter}
-                    onClick={() => setSelectedLetter(chap.letter)}
-                    className={`px-4 py-1.5 rounded-xl text-sm font-extrabold whitespace-nowrap transition-all ${
-                      active
-                        ? 'bg-amber-400 text-slate-950 shadow-md scale-105'
-                        : 'bg-white/10 dark:bg-slate-800 text-teal-50 dark:text-slate-300'
-                    }`}
-                  >
-                    {chap.letter === 'الكل' ? 'الكل' : `باب ${chap.letter}`}
-                  </button>
-                );
-              })}
-            </div>
+            {selectedLetter !== 'الكل' && (
+              <div className="flex items-center justify-between bg-amber-400 text-slate-950 px-4 py-2 rounded-xl text-sm font-extrabold">
+                <span>التصفح الحالي: باب حرف {selectedLetter}</span>
+                <button
+                  onClick={() => setSelectedLetter('الكل')}
+                  className="px-2.5 py-0.5 rounded-lg bg-slate-950/15 text-xs"
+                >
+                  إلغاء الفلتر ✕
+                </button>
+              </div>
+            )}
           </div>
         </header>
       )}
 
       {/* المحتوى الرئيسي */}
       <main className="flex-1 max-w-lg w-full mx-auto px-3.5 pt-4 pb-28">
-        {/* ١. الواجهة الرئيسية البسيطة التي توضح كل البرنامج */}
+        {/* ١. الواجهة الرئيسية: اختيار التبويب (معجم فقهي / أصولي / لغوي) والبحث الفوري بنفس الشاشة */}
         {activeTab === 'home' && (
           <div className="space-y-4">
-            {/* بطاقة الترحيب والبحث السريع المباشر */}
-            <div className="rounded-3xl bg-gradient-to-br from-teal-800 via-teal-700 to-emerald-800 dark:from-slate-900 dark:to-teal-950 text-white p-6 shadow-xl border border-teal-600/30">
-              <div className="flex items-center gap-3.5 mb-3">
-                <div className="w-14 h-14 rounded-2xl bg-white/15 flex items-center justify-center border border-white/25 text-2xl shadow-inner">
-                  📘
-                </div>
-                <div>
-                  <h1 className="text-2xl font-extrabold">تطبيق المعجم</h1>
-                  <p className="text-sm text-teal-100/90 mt-0.5">
-                    موسوعتك المبسطة للمصطلحات الفقهية والأصولية واللغوية
-                  </p>
-                </div>
+            <div className="rounded-3xl bg-gradient-to-br from-teal-800 via-teal-700 to-emerald-800 dark:from-slate-900 dark:to-teal-950 text-white p-5 shadow-xl border border-teal-600/30 space-y-4">
+              <div className="text-center space-y-1">
+                <h1 className="text-3xl font-extrabold">المعجم</h1>
+                <p className="text-sm text-teal-100/90 font-medium">
+                  {currentDict.title}
+                </p>
               </div>
 
-              {/* بحث كبير مباشر من الواجهة الرئيسية */}
-              <div className="relative flex items-center mt-4">
+              {/* اختيار التبويب المراد البحث فيه مباشرة */}
+              <div className="grid grid-cols-3 gap-2 p-1.5 rounded-2xl bg-black/25 border border-white/10">
+                {allDictionaries.map((dict) => {
+                  const isSelected = dict.id === currentDict.id;
+                  return (
+                    <button
+                      key={dict.id}
+                      onClick={() => setSelectedDictId(dict.id)}
+                      className={`py-3 px-2 rounded-xl text-sm font-extrabold text-center transition-all ${
+                        isSelected
+                          ? 'bg-white text-teal-900 shadow-md scale-[1.02]'
+                          : 'text-teal-50/90 hover:bg-white/10'
+                      }`}
+                    >
+                      {dict.category}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* حقل البحث الفوري في الواجهة الرئيسية يبحث ويعرض النتائج مباشرة تحت البحث */}
+              <div className="relative flex items-center">
                 <Search className="w-5 h-5 text-teal-700 absolute right-4 pointer-events-none" />
                 <input
                   type="text"
                   value={searchQuery}
-                  onChange={(e) => {
-                    setSearchQuery(e.target.value);
-                    setActiveTab('dictionary');
-                  }}
-                  placeholder="ابحث هنا مباشرة عن أي مصطلح أو معنى..."
-                  className="w-full pr-12 pl-4 py-4 rounded-2xl bg-white text-slate-900 placeholder-slate-400 font-bold text-base shadow-lg focus:outline-none focus:ring-2 focus:ring-amber-400"
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder={`ابحث الآن في ${currentDict.category}...`}
+                  className="w-full pr-12 pl-12 py-4 rounded-2xl bg-white text-slate-900 placeholder-slate-400 font-extrabold text-base shadow-lg focus:outline-none focus:ring-2 focus:ring-amber-400"
                 />
-              </div>
-            </div>
-
-            {/* بطاقات المعاجم الثلاثة الكبيرة للوصول المباشر بضغطة واحدة */}
-            <div className="space-y-3">
-              <h2 className="text-base font-extrabold text-slate-700 dark:text-slate-300 px-1">
-                اختر المعجم للتصفح:
-              </h2>
-              {allDictionaries.map((dict) => (
-                <button
-                  key={dict.id}
-                  onClick={() => {
-                    setSelectedDictId(dict.id);
-                    setSelectedLetter('الكل');
-                    setActiveTab('dictionary');
-                  }}
-                  className="w-full p-5 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 shadow-sm hover:border-teal-500 active:scale-[0.99] transition text-right flex items-center justify-between gap-4"
-                >
-                  <div className="space-y-1">
-                    <span className="inline-block px-3 py-1 rounded-xl bg-teal-50 dark:bg-teal-950/70 text-teal-700 dark:text-teal-300 text-xs font-extrabold">
-                      {dict.category}
-                    </span>
-                    <h3 className="text-lg font-extrabold text-slate-900 dark:text-white">
-                      {dict.title}
-                    </h3>
-                    <p className="text-xs text-slate-500 dark:text-slate-400 line-clamp-2">
-                      {dict.description}
-                    </p>
-                  </div>
-                  <div className="w-12 h-12 rounded-2xl bg-teal-600 text-white flex items-center justify-center font-extrabold text-lg shrink-0 shadow-md">
-                    ←
-                  </div>
-                </button>
-              ))}
-            </div>
-
-            {/* شرح مبسط وسريع لطريقة عمل البرنامج */}
-            <div className="bg-white dark:bg-slate-900 rounded-3xl p-5 border border-slate-200/90 dark:border-slate-800 shadow-sm space-y-3">
-              <h3 className="text-base font-extrabold text-slate-900 dark:text-white">
-                كيف تستخدم التطبيق ببساطة؟
-              </h3>
-              <div className="grid grid-cols-1 gap-2.5 text-sm text-slate-700 dark:text-slate-300">
-                <div className="p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/60">
-                  🔍 <strong>بحث ذكي وشامل:</strong> اكتب الكلمة أو معناها في شريط البحث وسيظهر لك المصطلح فوراً حتى بدون كتابة دقيقة.
-                </div>
-                <div className="p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/60">
-                  📦 <strong>بوكسات كبيرة وواضحة:</strong> اضغط على أي مصطلح ليفتح لك الشرح الكامل بخط كبير ومريح مع أزرار <strong>النسخ والمشاركة</strong>.
-                </div>
-                <div className="p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/60">
-                  🌙 <strong>تخصيص المظهر والخط:</strong> من تبويب <strong>"عن المعجم"</strong> بالأسفل يمكنك التبديل بين الثيم الأبيض والأسود وتكبير الخط.
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* ٢. شاشة المعجم والمحفوظات (بوكسات كبيرة وواضحة وعدد أقل في الصفحة بدون أرقام صفحات) */}
-        {(activeTab === 'dictionary' || activeTab === 'bookmarks') && (
-          <div className="space-y-3.5">
-            {filteredEntries.length === 0 ? (
-              <div className="bg-white dark:bg-slate-900 rounded-3xl p-10 text-center border border-slate-200 dark:border-slate-800 shadow-sm my-4">
-                <Search className="w-12 h-12 mx-auto text-slate-300 dark:text-slate-600 mb-3" />
-                <h3 className="text-lg font-extrabold text-slate-800 dark:text-slate-200 mb-1">
-                  {activeTab === 'bookmarks'
-                    ? 'لا توجد مصطلحات محفوظة بعد'
-                    : 'لم يتم العثور على نتائج مطابقة'}
-                </h3>
-                <p className="text-sm text-slate-500 dark:text-slate-400 mb-4">
-                  {activeTab === 'bookmarks'
-                    ? 'اضغط على نجمة الحفظ بجانب أي مصطلح للرجوع إليه هنا.'
-                    : 'جرب البحث بكلمة أخرى أو اختر "الكل" من شريط الحروف.'}
-                </p>
-              </div>
-            ) : (
-              <div className="space-y-3.5">
-                {filteredEntries.slice(0, visibleCount).map((entry) => {
-                  const isExpanded = expandedIds.has(entry.id);
-                  const isBookmarked = bookmarksSet.has(entry.id);
-                  const refMatch = entry.definition.match(/راجع\s+(?:لفظ|كلمة)?\s*[«"(\[]?([^»")\].،]{2,25})[»")\]]?/);
-
-                  return (
-                    <div
-                      key={entry.id}
-                      onClick={() => toggleCard(entry.id)}
-                      className={`rounded-3xl transition-all duration-200 cursor-pointer border ${
-                        isExpanded
-                          ? 'bg-white dark:bg-slate-900 border-teal-500 shadow-lg ring-2 ring-teal-500/20'
-                          : 'bg-white dark:bg-slate-900/90 border-slate-200/90 dark:border-slate-800 shadow-sm active:scale-[0.99]'
-                      }`}
-                    >
-                      {/* رأس البوكس بحجم كبير ومبسط جداً بدون رقم صفحة */}
-                      <div className="p-5 flex items-center justify-between gap-3">
-                        <div className="flex items-center gap-3.5 min-w-0">
-                          <div
-                            className={`w-12 h-12 rounded-2xl flex items-center justify-center font-extrabold text-lg shrink-0 transition-colors ${
-                              isExpanded
-                                ? 'bg-teal-600 text-white shadow-md'
-                                : 'bg-teal-50 dark:bg-slate-800 text-teal-700 dark:text-teal-400 border border-teal-200/60 dark:border-slate-700'
-                            }`}
-                          >
-                            {entry.term.replace(/^ال/, '').charAt(0) || 'أ'}
-                          </div>
-
-                          <div className="min-w-0">
-                            <h2 className="text-xl font-extrabold text-slate-900 dark:text-white leading-snug">
-                              {entry.term}
-                            </h2>
-                            {!isExpanded && (
-                              <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                                اضغط لعرض الجواب • باب {entry.letter}
-                              </p>
-                            )}
-                          </div>
-                        </div>
-
-                        <div className="flex items-center gap-2 shrink-0">
-                          <button
-                            onClick={(e) => toggleBookmark(entry.id, e)}
-                            className={`p-2.5 rounded-2xl transition ${
-                              isBookmarked
-                                ? 'text-amber-500 bg-amber-50 dark:bg-amber-950/40'
-                                : 'text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
-                            }`}
-                          >
-                            <Bookmark className={`w-5 h-5 ${isBookmarked ? 'fill-current' : ''}`} />
-                          </button>
-
-                          <div
-                            className={`w-8 h-8 rounded-full flex items-center justify-center transition-transform duration-200 ${
-                              isExpanded ? 'rotate-180 text-teal-600 dark:text-teal-400' : 'text-slate-400'
-                            }`}
-                          >
-                            <ChevronDown className="w-5 h-5" />
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* الجواب عند فتح البوكس بخط واضح وكبير + نسخ ومشاركة أصلية */}
-                      {isExpanded && (
-                        <div
-                          onClick={(e) => e.stopPropagation()}
-                          className="px-5 pb-5 pt-2 border-t border-slate-100 dark:border-slate-800/80 bg-slate-50/60 dark:bg-slate-900/50 rounded-b-3xl cursor-auto select-text"
-                        >
-                          <p
-                            className={`font-serif text-slate-800 dark:text-slate-100 ${fontSizeClass} bg-white dark:bg-slate-950/80 p-4 rounded-2xl border border-slate-200/70 dark:border-slate-800 shadow-inner`}
-                          >
-                            {entry.definition}
-                          </p>
-
-                          <div className="flex flex-wrap items-center gap-2 mt-3 mb-4">
-                            <span className="text-xs font-bold px-3 py-1 rounded-xl bg-teal-100/80 dark:bg-teal-950/80 text-teal-800 dark:text-teal-300">
-                              باب حرف {entry.letter}
-                            </span>
-
-                            {refMatch && (
-                              <button
-                                onClick={(e) => jumpToTerm(refMatch[1], e)}
-                                className="text-xs font-bold px-3 py-1 rounded-xl bg-amber-100 dark:bg-amber-950/70 text-amber-800 dark:text-amber-300 flex items-center gap-1"
-                              >
-                                <ArrowUpRight className="w-3.5 h-3.5" />
-                                <span>راجع: {refMatch[1]}</span>
-                              </button>
-                            )}
-                          </div>
-
-                          <div className="grid grid-cols-2 gap-3">
-                            <button
-                              onClick={(e) => handleCopy(entry, e)}
-                              className="flex items-center justify-center gap-2 py-3.5 rounded-2xl bg-teal-600 hover:bg-teal-700 active:scale-95 text-white text-sm font-extrabold shadow-md transition"
-                            >
-                              <Copy className="w-4 h-4" />
-                              <span>نسخ الجواب</span>
-                            </button>
-
-                            <button
-                              onClick={(e) => handleShare(entry, e)}
-                              className="flex items-center justify-center gap-2 py-3.5 rounded-2xl bg-slate-800 dark:bg-slate-700 hover:bg-slate-900 active:scale-95 text-white text-sm font-extrabold shadow-md transition"
-                            >
-                              <Share2 className="w-4 h-4" />
-                              <span>مشاركة</span>
-                            </button>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-
-                {filteredEntries.length > visibleCount && (
+                {searchQuery && (
                   <button
-                    onClick={() => setVisibleCount((prev) => prev + 15)}
-                    className="w-full py-4 rounded-3xl bg-white dark:bg-slate-900 text-teal-700 dark:text-teal-400 font-extrabold text-base border border-slate-200 dark:border-slate-800 shadow-sm"
+                    onClick={() => setSearchQuery('')}
+                    className="absolute left-3.5 p-1.5 text-slate-600 hover:text-slate-900 bg-slate-200 rounded-full"
                   >
-                    عرض المزيد ({filteredEntries.length - visibleCount} متبقية)
+                    <X className="w-4 h-4" />
                   </button>
                 )}
+              </div>
+            </div>
+
+            {/* إذا كتب المستخدم في بحث الواجهة الرئيسية تظهر النتائج فوراً هنا، وإلا تظهر أقسام البرنامج */}
+            {searchQuery.trim() ? (
+              <div className="space-y-3">
+                <div className="flex items-center justify-between px-1 text-sm font-extrabold text-teal-700 dark:text-teal-400">
+                  <span>نتائج البحث في {currentDict.category} ({filteredEntries.length}):</span>
+                </div>
+                {renderEntryCards(filteredEntries)}
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {allDictionaries.map((dict) => (
+                  <button
+                    key={dict.id}
+                    onClick={() => {
+                      setSelectedDictId(dict.id);
+                      setSelectedLetter('الكل');
+                      setActiveTab('dictionary');
+                    }}
+                    className="w-full p-5 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 shadow-sm hover:border-teal-500 active:scale-[0.99] transition text-right flex items-center justify-between gap-4"
+                  >
+                    <div className="space-y-1">
+                      <span className="inline-block px-3 py-1 rounded-xl bg-teal-50 dark:bg-teal-950/70 text-teal-700 dark:text-teal-300 text-xs font-extrabold">
+                        {dict.category}
+                      </span>
+                      <h3 className="text-xl font-extrabold text-slate-900 dark:text-white">
+                        {dict.title}
+                      </h3>
+                      <p className="text-sm text-slate-500 dark:text-slate-400 font-bold">
+                        {dict.author}
+                      </p>
+                    </div>
+                    <div className="w-12 h-12 rounded-2xl bg-teal-600 text-white flex items-center justify-center font-extrabold text-lg shrink-0 shadow-md">
+                      ←
+                    </div>
+                  </button>
+                ))}
               </div>
             )}
           </div>
         )}
 
-        {/* ٣. شاشة عن المعجم + التحكم بالثيم (أبيض / أسود) وحجم الخط كما طلبت */}
-        {activeTab === 'about' && (
-          <div className="space-y-4">
-            {/* بطاقة معلومات الكتاب */}
-            <div className="bg-white dark:bg-slate-900 rounded-3xl p-6 border border-slate-200 dark:border-slate-800 shadow-sm space-y-3">
-              <div className="flex items-center gap-3.5 pb-3 border-b border-slate-100 dark:border-slate-800">
-                <div className="w-12 h-12 rounded-2xl bg-teal-600 text-white flex items-center justify-center shadow-md">
-                  <BookOpen className="w-6 h-6" />
-                </div>
-                <div>
-                  <h2 className="text-lg font-extrabold text-slate-900 dark:text-white">
-                    {currentDict.title}
-                  </h2>
-                  <p className="text-sm text-teal-700 dark:text-teal-400 font-bold mt-0.5">
-                    {currentDict.author} • {currentDict.publisher}
-                  </p>
-                </div>
-              </div>
-              <p className="text-base leading-relaxed text-slate-700 dark:text-slate-300 font-serif">
-                {currentDict.description}
+        {/* ٢. شاشة المعجم والمحفوظات */}
+        {(activeTab === 'dictionary' || activeTab === 'bookmarks') && renderEntryCards(filteredEntries)}
+
+        {/* ٣. خانة الفهرست الجديدة لترتيب الأحرف الأبجدية بشكل كبير وواضح */}
+        {activeTab === 'fehrest' && (
+          <div className="bg-white dark:bg-slate-900 rounded-3xl p-5 border border-slate-200 dark:border-slate-800 shadow-sm space-y-4">
+            <div className="text-center border-b border-slate-100 dark:border-slate-800 pb-3">
+              <h2 className="text-xl font-extrabold text-slate-900 dark:text-white">
+                الفهرست الأبجدي ({currentDict.category})
+              </h2>
+              <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
+                اختر الحرف لعرض جميع مصطلحاته
               </p>
             </div>
 
-            {/* بطاقة اختيار الثيم (أبيض / أسود) وتكبير الخط المنقولة إلى هنا بحجم كبير وواضح */}
-            <div className="bg-white dark:bg-slate-900 rounded-3xl p-6 border border-slate-200 dark:border-slate-800 shadow-sm space-y-4">
-              <h3 className="text-lg font-extrabold text-slate-900 dark:text-white">
-                مظهر التطبيق والثيم
+            <div className="grid grid-cols-3 gap-3">
+              {ARABIC_CHAPTERS.map((chap) => {
+                const isSelected = selectedLetter === chap.letter;
+                return (
+                  <button
+                    key={chap.letter}
+                    onClick={() => {
+                      setSelectedLetter(chap.letter);
+                      setActiveTab('dictionary');
+                    }}
+                    className={`p-4 rounded-2xl border-2 flex flex-col items-center justify-center gap-1.5 transition active:scale-95 ${
+                      isSelected
+                        ? 'bg-teal-600 text-white border-teal-600 shadow-md'
+                        : 'bg-slate-50 dark:bg-slate-800/80 text-slate-900 dark:text-white border-slate-200/80 dark:border-slate-700'
+                    }`}
+                  >
+                    <span className="text-2xl font-extrabold">{chap.short}</span>
+                    <span className="text-xs font-bold">
+                      {chap.letter === 'الكل' ? 'جميع الحروف' : `حرف ${chap.letter}`}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* ٤. شاشة الإعدادات وتفاصيل الكتاب الحقيقية من نص الكتاب الأصلي */}
+        {activeTab === 'about' && (
+          <div className="space-y-4">
+            {/* التحكم بالثيم وحجم الخط الفعلي */}
+            <div className="bg-white dark:bg-slate-900 rounded-3xl p-6 border border-slate-200 dark:border-slate-800 shadow-sm space-y-5">
+              <h3 className="text-xl font-extrabold text-slate-900 dark:text-white">
+                إعدادات المظهر والخط
               </h3>
 
               <div className="grid grid-cols-2 gap-3">
@@ -574,7 +601,7 @@ export default function App() {
                   }`}
                 >
                   <Sun className="w-7 h-7 text-amber-500" />
-                  <span>ثيم أبيض (نهاري)</span>
+                  <span>ثيم أبيض</span>
                 </button>
 
                 <button
@@ -586,18 +613,18 @@ export default function App() {
                   }`}
                 >
                   <Moon className="w-7 h-7 text-teal-400" />
-                  <span>ثيم أسود (ليلي)</span>
+                  <span>ثيم أسود</span>
                 </button>
               </div>
 
-              <div className="pt-3 border-t border-slate-100 dark:border-slate-800">
-                <div className="text-sm font-bold text-slate-600 dark:text-slate-300 mb-2.5 flex items-center gap-2">
-                  <Type className="w-4 h-4" />
-                  <span>حجم خط الشرح والجواب:</span>
+              <div className="pt-4 border-t border-slate-100 dark:border-slate-800">
+                <div className="text-base font-extrabold text-slate-800 dark:text-slate-200 mb-3 flex items-center gap-2">
+                  <Type className="w-5 h-5 text-teal-600" />
+                  <span>حجم الخط في التطبيق:</span>
                 </div>
-                <div className="grid grid-cols-3 gap-2">
+                <div className="grid grid-cols-3 gap-2.5">
                   {[
-                    { id: 'sm', label: 'متوسط' },
+                    { id: 'sm', label: 'عادي' },
                     { id: 'md', label: 'كبير' },
                     { id: 'lg', label: 'كبير جداً' }
                   ].map((sz) => (
@@ -607,9 +634,9 @@ export default function App() {
                         setFontSize(sz.id);
                         localStorage.setItem(STORAGE_KEYS.FONT_SIZE, sz.id);
                       }}
-                      className={`py-3 rounded-xl font-extrabold text-sm border transition ${
+                      className={`py-3.5 rounded-2xl font-extrabold text-base border-2 transition ${
                         fontSize === sz.id
-                          ? 'bg-teal-600 text-white border-teal-600 shadow-sm'
+                          ? 'bg-teal-600 text-white border-teal-600 shadow-md'
                           : 'bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700'
                       }`}
                     >
@@ -617,15 +644,55 @@ export default function App() {
                     </button>
                   ))}
                 </div>
+                {/* معاينة حية لحجم الخط المختار */}
+                <div
+                  style={{ fontSize: currentFont.defSize, lineHeight: currentFont.lineHeight }}
+                  className="mt-3 p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 font-serif text-center"
+                >
+                  نموذج معاينة حجم الخط المختار للقراءة
+                </div>
+              </div>
+            </div>
+
+            {/* بيانات الكتاب ومؤلفه الحقيقية كما وردت في صفحات الكتاب (ص ١ - ٨) */}
+            <div className="bg-white dark:bg-slate-900 rounded-3xl p-6 border border-slate-200 dark:border-slate-800 shadow-sm space-y-4">
+              <h2 className="text-xl font-extrabold text-slate-900 dark:text-white border-b border-slate-100 dark:border-slate-800 pb-3">
+                بطاقة الكتاب والمؤلف
+              </h2>
+
+              <div className="space-y-2.5 text-base">
+                <div>
+                  <span className="font-extrabold text-teal-700 dark:text-teal-400">اسم الكتاب: </span>
+                  <span className="font-bold">الاصطلاحات الفقهية في الرسائل العملية</span>
+                </div>
+                <div>
+                  <span className="font-extrabold text-teal-700 dark:text-teal-400">المؤلف: </span>
+                  <span className="font-bold">الشيخ ياسين حسن عيسى العاملي</span>
+                </div>
+                <div>
+                  <span className="font-extrabold text-teal-700 dark:text-teal-400">الناشر: </span>
+                  <span className="font-bold">دار البلاغة للطباعة والنشر والتوزيع (بيروت) / مؤسسة النشر الإسلامي التابعة لجماعة المدرسين بقم المشرفة</span>
+                </div>
+                <div>
+                  <span className="font-extrabold text-teal-700 dark:text-teal-400">الطبعة: </span>
+                  <span className="font-bold">الطبعة الأولى (١٤١٣ هـ - ١٩٩٣ م)</span>
+                </div>
+              </div>
+
+              <div className="pt-3 border-t border-slate-100 dark:border-slate-800 space-y-3 font-serif text-base leading-relaxed text-slate-700 dark:text-slate-300">
+                <p className="font-bold text-slate-900 dark:text-white">من مقدمة المؤلف الشيخ ياسين حسن عيسى العاملي:</p>
+                <p>
+                  «فهذا كتيب ذكرت فيه أكثر من ألف كلمة تحتوي على أغلب ما يحتاجه المتعلم والمبلغ لفهم عبائر العلماء الأجلاء الواردة في رسائلهم العملية. وقد رتبته على الأحرف الأبجدية وراعيت الحرف الأول والثاني من الكلمة بما هي واردة في لسان العلماء، ولم أنظر إلى الاشتقاقات اللغوية لأن هذا بنظري أسهل أخذاً وتناولاً».
+                </p>
               </div>
             </div>
           </div>
         )}
       </main>
 
-      {/* شريط التنقل السفلي المبسط والكبير بدون تبويب الفهرس الملغى */}
+      {/* شريط التنقل السفلي (٥ خانات واضحة: الرئيسية، المعجم، الفهرست، المحفوظات، الإعدادات) */}
       <nav className="fixed bottom-0 inset-x-0 z-40 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-slate-200 dark:border-slate-800 shadow-2xl">
-        <div className="max-w-lg mx-auto px-3 py-2 grid grid-cols-4 gap-1.5">
+        <div className="max-w-lg mx-auto px-2 py-2 grid grid-cols-5 gap-1">
           <button
             onClick={() => setActiveTab('home')}
             className={`flex flex-col items-center justify-center py-2 rounded-2xl transition ${
@@ -635,7 +702,7 @@ export default function App() {
             }`}
           >
             <Home className="w-5 h-5 mb-0.5" />
-            <span className="text-xs">الرئيسية</span>
+            <span className="text-[11px]">الرئيسية</span>
           </button>
 
           <button
@@ -647,7 +714,19 @@ export default function App() {
             }`}
           >
             <BookOpen className="w-5 h-5 mb-0.5" />
-            <span className="text-xs">المعجم</span>
+            <span className="text-[11px]">المعجم</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('fehrest')}
+            className={`flex flex-col items-center justify-center py-2 rounded-2xl transition ${
+              activeTab === 'fehrest'
+                ? 'text-teal-700 dark:text-teal-400 bg-teal-50 dark:bg-teal-950/60 font-extrabold'
+                : 'text-slate-500 dark:text-slate-400'
+            }`}
+          >
+            <ListFilter className="w-5 h-5 mb-0.5" />
+            <span className="text-[11px]">الفهرست</span>
           </button>
 
           <button
@@ -659,9 +738,9 @@ export default function App() {
             }`}
           >
             <Bookmark className="w-5 h-5 mb-0.5" />
-            <span className="text-xs">المحفوظات</span>
+            <span className="text-[11px]">المحفوظات</span>
             {bookmarks.length > 0 && (
-              <span className="absolute top-1.5 right-6 w-4 h-4 rounded-full bg-amber-500 text-white text-[10px] font-bold flex items-center justify-center">
+              <span className="absolute top-1 right-4 w-4 h-4 rounded-full bg-amber-500 text-white text-[10px] font-bold flex items-center justify-center">
                 {bookmarks.length}
               </span>
             )}
@@ -676,7 +755,7 @@ export default function App() {
             }`}
           >
             <Info className="w-5 h-5 mb-0.5" />
-            <span className="text-xs">عن المعجم</span>
+            <span className="text-[11px]">الإعدادات</span>
           </button>
         </div>
       </nav>
