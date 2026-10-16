@@ -58,12 +58,10 @@ html_template = f"""<!DOCTYPE html>
 <body class="bg-slate-100 dark:bg-slate-950 text-slate-900 dark:text-slate-100 antialiased selection:bg-teal-500 selection:text-white transition-colors duration-200">
   <div id="app"></div>
 
-  <!-- قاعدة البيانات الكاملة (تُدار من قبل المطور فقط عبر ملف dictionaries.json) -->
   <script>
     window.ALMOGAM_INITIAL_DATA = {db_json_str};
   </script>
 
-  <!-- محرك البحث الذكي وواجهة تطبيق الموبايل للمستخدم النهائي -->
   <script>
     {smart_search_code}
 
@@ -74,48 +72,47 @@ html_template = f"""<!DOCTYPE html>
     }};
 
     const ARABIC_CHAPTERS = [
-      {{ letter: 'الكل', short: 'الكل', startPage: 9 }},
-      {{ letter: 'الهمزة', short: 'أ', startPage: 9 }},
-      {{ letter: 'الباء', short: 'ب', startPage: 27 }},
-      {{ letter: 'التاء', short: 'ت', startPage: 37 }},
-      {{ letter: 'الثاء', short: 'ث', startPage: 51 }},
-      {{ letter: 'الجيم', short: 'ج', startPage: 55 }},
-      {{ letter: 'الحاء', short: 'ح', startPage: 63 }},
-      {{ letter: 'الخاء', short: 'خ', startPage: 75 }},
-      {{ letter: 'الدال', short: 'د', startPage: 83 }},
-      {{ letter: 'الذال', short: 'ذ', startPage: 89 }},
-      {{ letter: 'الراء', short: 'ر', startPage: 93 }},
-      {{ letter: 'الزاي', short: 'ز', startPage: 101 }},
-      {{ letter: 'السين', short: 'س', startPage: 103 }},
-      {{ letter: 'الشين', short: 'ش', startPage: 113 }},
-      {{ letter: 'الصاد', short: 'ص', startPage: 121 }},
-      {{ letter: 'الضاد', short: 'ض', startPage: 127 }},
-      {{ letter: 'الطاء', short: 'ط', startPage: 129 }},
-      {{ letter: 'الظاء', short: 'ظ', startPage: 135 }},
-      {{ letter: 'العين', short: 'ع', startPage: 137 }},
-      {{ letter: 'الغين', short: 'غ', startPage: 151 }},
-      {{ letter: 'الفاء', short: 'ف', startPage: 155 }},
-      {{ letter: 'القاف', short: 'ق', startPage: 164 }},
-      {{ letter: 'الكاف', short: 'ك', startPage: 175 }},
-      {{ letter: 'اللام', short: 'ل', startPage: 183 }},
-      {{ letter: 'الميم', short: 'م', startPage: 189 }},
-      {{ letter: 'النون', short: 'ن', startPage: 215 }},
-      {{ letter: 'الهاء', short: 'هـ', startPage: 223 }},
-      {{ letter: 'الواو', short: 'و', startPage: 227 }},
-      {{ letter: 'الياء', short: 'ي', startPage: 233 }}
+      {{ letter: 'الكل', short: 'الكل' }},
+      {{ letter: 'الهمزة', short: 'أ' }},
+      {{ letter: 'الباء', short: 'ب' }},
+      {{ letter: 'التاء', short: 'ت' }},
+      {{ letter: 'الثاء', short: 'ث' }},
+      {{ letter: 'الجيم', short: 'ج' }},
+      {{ letter: 'الحاء', short: 'ح' }},
+      {{ letter: 'الخاء', short: 'خ' }},
+      {{ letter: 'الدال', short: 'د' }},
+      {{ letter: 'الذال', short: 'ذ' }},
+      {{ letter: 'الراء', short: 'ر' }},
+      {{ letter: 'الزاي', short: 'ز' }},
+      {{ letter: 'السين', short: 'س' }},
+      {{ letter: 'الشين', short: 'ش' }},
+      {{ letter: 'الصاد', short: 'ص' }},
+      {{ letter: 'الضاد', short: 'ض' }},
+      {{ letter: 'الطاء', short: 'ط' }},
+      {{ letter: 'الظاء', short: 'ظ' }},
+      {{ letter: 'العين', short: 'ع' }},
+      {{ letter: 'الغين', short: 'غ' }},
+      {{ letter: 'الفاء', short: 'ف' }},
+      {{ letter: 'القاف', short: 'ق' }},
+      {{ letter: 'الكاف', short: 'ك' }},
+      {{ letter: 'اللام', short: 'ل' }},
+      {{ letter: 'الميم', short: 'م' }},
+      {{ letter: 'النون', short: 'ن' }},
+      {{ letter: 'الهاء', short: 'هـ' }},
+      {{ letter: 'الواو', short: 'و' }},
+      {{ letter: 'الياء', short: 'ي' }}
     ];
 
     const state = {{
       darkMode: localStorage.getItem(STORAGE_KEYS.THEME) === 'dark',
-      fontSize: localStorage.getItem(STORAGE_KEYS.FONT_SIZE) || 'md',
+      fontSize: localStorage.getItem(STORAGE_KEYS.FONT_SIZE) || 'lg',
       bookmarks: JSON.parse(localStorage.getItem(STORAGE_KEYS.BOOKMARKS) || '[]'),
-      activeTab: 'dictionary', // 'dictionary' | 'index' | 'bookmarks' | 'about'
+      activeTab: 'home', // 'home' | 'dictionary' | 'bookmarks' | 'about'
       selectedDictId: 'fiqhi_main',
       selectedLetter: 'الكل',
       searchQuery: '',
-      searchScope: 'all',
-      expandedIds: new Set(['fiqh_1', 'fiqh_6']),
-      visibleCount: 40,
+      expandedIds: new Set(['fiqh_1']),
+      visibleCount: 15,
       allDictionaries: []
     }};
 
@@ -139,7 +136,7 @@ html_template = f"""<!DOCTYPE html>
       if (!toast) {{
         toast = document.createElement('div');
         toast.id = 'toast-banner';
-        toast.className = 'fixed top-4 left-1/2 -translate-x-1/2 z-50 bg-teal-700 text-white px-5 py-2.5 rounded-full shadow-xl text-xs sm:text-sm font-bold transition-all';
+        toast.className = 'fixed top-5 left-1/2 -translate-x-1/2 z-50 bg-teal-700 text-white px-6 py-3 rounded-full shadow-2xl text-sm font-bold transition-all';
         document.body.appendChild(toast);
       }}
       toast.textContent = '✓ ' + msg;
@@ -156,51 +153,59 @@ html_template = f"""<!DOCTYPE html>
         .replace(/"/g, '&quot;');
     }}
 
-    window.toggleTheme = function() {{
-      state.darkMode = !state.darkMode;
+    window.setThemeMode = function(isDark) {{
+      state.darkMode = isDark;
       localStorage.setItem(STORAGE_KEYS.THEME, state.darkMode ? 'dark' : 'light');
       applyTheme();
       renderApp();
     }};
 
-    window.cycleFontSize = function() {{
-      state.fontSize = state.fontSize === 'sm' ? 'md' : state.fontSize === 'md' ? 'lg' : 'sm';
-      localStorage.setItem(STORAGE_KEYS.FONT_SIZE, state.fontSize);
+    window.setFontSize = function(sz) {{
+      state.fontSize = sz;
+      localStorage.setItem(STORAGE_KEYS.FONT_SIZE, sz);
       renderApp();
     }};
 
     window.selectDictionary = function(id) {{
       state.selectedDictId = id;
       state.selectedLetter = 'الكل';
-      state.visibleCount = 40;
-      if (state.activeTab === 'about') state.activeTab = 'dictionary';
+      state.visibleCount = 15;
+      state.activeTab = 'dictionary';
       renderApp();
     }};
 
     window.selectLetter = function(letter) {{
       state.selectedLetter = letter;
-      state.visibleCount = 40;
+      state.visibleCount = 15;
       state.activeTab = 'dictionary';
       renderApp();
     }};
 
     window.switchTab = function(tab) {{
       state.activeTab = tab;
-      state.visibleCount = 40;
+      state.visibleCount = 15;
       renderApp();
     }};
 
     window.onSearchInput = function(val) {{
       state.searchQuery = val;
-      state.visibleCount = 40;
+      state.visibleCount = 15;
       if (state.activeTab !== 'dictionary' && state.activeTab !== 'bookmarks') {{
         state.activeTab = 'dictionary';
+        renderApp();
+        const input = document.getElementById('search-input');
+        if (input) {{
+          input.focus();
+          input.setSelectionRange(val.length, val.length);
+        }}
+        return;
       }}
       renderContentOnly();
     }};
 
-    window.toggleSearchScope = function() {{
-      state.searchScope = state.searchScope === 'all' ? 'termOnly' : 'all';
+    window.clearSearch = function() {{
+      state.searchQuery = '';
+      state.visibleCount = 15;
       renderApp();
     }};
 
@@ -209,18 +214,6 @@ html_template = f"""<!DOCTYPE html>
         state.expandedIds.delete(id);
       }} else {{
         state.expandedIds.add(id);
-      }}
-      renderContentOnly();
-    }};
-
-    window.toggleAllVisible = function() {{
-      const {{ filtered }} = getFilteredData();
-      const visibleIds = filtered.slice(0, state.visibleCount).map(e => e.id);
-      const allOpen = visibleIds.length > 0 && visibleIds.every(id => state.expandedIds.has(id));
-      if (allOpen) {{
-        state.expandedIds.clear();
-      }} else {{
-        visibleIds.forEach(id => state.expandedIds.add(id));
       }}
       renderContentOnly();
     }};
@@ -239,28 +232,61 @@ html_template = f"""<!DOCTYPE html>
       renderApp();
     }};
 
-    window.copyEntry = function(id, ev) {{
+    window.copyEntry = async function(id, ev) {{
       if (ev) ev.stopPropagation();
       const dict = state.allDictionaries.find(d => d.id === state.selectedDictId) || state.allDictionaries[0];
       const entry = dict.preparedEntries.find(e => e.id === id);
       if (!entry) return;
-      const text = `📘 [${{dict.category}} - ${{dict.title}}]\\n🔹 المصطلح: ${{entry.term}}\\n📖 الجواب: ${{entry.definition}}\\n📄 (باب حرف ${{entry.letter}} - صفحة ${{entry.page}})`;
-      navigator.clipboard?.writeText(text).catch(() => {{}});
+      const text = `📘 ${{entry.term}}\\n\\n${{entry.definition}}\\n\\n— (${{dict.category}} - تطبيق المعجم)`;
+      try {{
+        if (window.Capacitor?.Plugins?.Clipboard) {{
+          await window.Capacitor.Plugins.Clipboard.write({{ string: text }});
+        }} else if (navigator.clipboard) {{
+          await navigator.clipboard.writeText(text);
+        }} else {{
+          const ta = document.createElement('textarea');
+          ta.value = text;
+          document.body.appendChild(ta);
+          ta.select();
+          document.execCommand('copy');
+          document.body.removeChild(ta);
+        }}
+      }} catch {{}}
       showToast(`تم نسخ "${{entry.term}}" مع الجواب!`);
     }};
 
-    window.shareEntry = function(id, ev) {{
+    window.shareEntry = async function(id, ev) {{
       if (ev) ev.stopPropagation();
       const dict = state.allDictionaries.find(d => d.id === state.selectedDictId) || state.allDictionaries[0];
       const entry = dict.preparedEntries.find(e => e.id === id);
       if (!entry) return;
-      const text = `📘 ${{entry.term}}\\n\\n${{entry.definition}}\\n\\n— من: ${{dict.title}} (ص ${{entry.page}}) عبر تطبيق المعجم`;
-      if (navigator.share) {{
-        navigator.share({{ title: `المعجم: ${{entry.term}}`, text }}).catch(() => {{}});
-      }} else {{
-        navigator.clipboard?.writeText(text).catch(() => {{}});
-        showToast(`تم تجهيز ونسخ "${{entry.term}}" للمشاركة!`);
+      const title = `المعجم: ${{entry.term}}`;
+      const text = `📘 ${{entry.term}}\\n\\n${{entry.definition}}\\n\\n— (${{dict.category}} - تطبيق المعجم)`;
+
+      // 1. الجسر الأصلي للأندرويد (Native Share Sheet via MainActivity.java)
+      if (window.AndroidShare && typeof window.AndroidShare.share === 'function') {{
+        window.AndroidShare.share(title, text);
+        return;
       }}
+      // 2. Capacitor Share Plugin
+      if (window.Capacitor?.Plugins?.Share) {{
+        try {{
+          await window.Capacitor.Plugins.Share.share({{ title, text, dialogTitle: title }});
+          return;
+        }} catch {{
+          return;
+        }}
+      }}
+      // 3. Web Share API
+      if (navigator.share) {{
+        try {{
+          await navigator.share({{ title, text }});
+          return;
+        }} catch {{
+          return;
+        }}
+      }}
+      window.copyEntry(id, ev);
     }};
 
     window.jumpToTerm = function(term, ev) {{
@@ -269,11 +295,11 @@ html_template = f"""<!DOCTYPE html>
       state.activeTab = 'dictionary';
       state.searchQuery = term;
       renderApp();
-      showToast(`البحث الذكي عن: ${{term}}`);
+      showToast(`البحث عن: ${{term}}`);
     }};
 
     window.loadMore = function() {{
-      state.visibleCount += 50;
+      state.visibleCount += 15;
       renderContentOnly();
     }};
 
@@ -282,29 +308,79 @@ html_template = f"""<!DOCTYPE html>
       const bookmarksSet = new Set(state.bookmarks);
       const filtered = smartSearchEntries(currentDict.preparedEntries, state.searchQuery, {{
         letterFilter: state.selectedLetter,
-        searchScope: state.searchScope,
+        searchScope: 'all',
         onlyBookmarks: state.activeTab === 'bookmarks',
         bookmarksSet
       }});
-      const counts = {{ 'الكل': currentDict.preparedEntries.length }};
-      for (const e of currentDict.preparedEntries) {{
-        counts[e.letter] = (counts[e.letter] || 0) + 1;
-      }}
-      return {{ currentDict, filtered, counts, bookmarksSet }};
+      return {{ currentDict, filtered, bookmarksSet }};
     }}
 
     function renderMainSection() {{
-      const {{ currentDict, filtered, counts, bookmarksSet }} = getFilteredData();
-      const fontClass = state.fontSize === 'sm' ? 'text-sm leading-relaxed' : state.fontSize === 'lg' ? 'text-xl leading-loose' : 'text-base leading-relaxed';
+      const {{ currentDict, filtered, bookmarksSet }} = getFilteredData();
+      const fontClass = state.fontSize === 'sm' ? 'text-base leading-relaxed' : state.fontSize === 'lg' ? 'text-xl leading-loose' : 'text-lg leading-relaxed';
 
+      // ١. الواجهة الرئيسية البسيطة التي توضح كل البرنامج
+      if (state.activeTab === 'home') {{
+        return `
+          <div class="space-y-4">
+            <div class="rounded-3xl bg-gradient-to-br from-teal-800 via-teal-700 to-emerald-800 dark:from-slate-900 dark:to-teal-950 text-white p-6 shadow-xl border border-teal-600/30">
+              <div class="flex items-center gap-3.5 mb-3">
+                <div class="w-14 h-14 rounded-2xl bg-white/15 flex items-center justify-center border border-white/25 text-2xl shadow-inner">📘</div>
+                <div>
+                  <h1 class="text-2xl font-extrabold">تطبيق المعجم</h1>
+                  <p class="text-sm text-teal-100/90 mt-0.5">موسوعتك المبسطة للمصطلحات الفقهية والأصولية واللغوية</p>
+                </div>
+              </div>
+
+              <div class="relative flex items-center mt-4">
+                <input
+                  type="text"
+                  placeholder="🔍 ابحث هنا مباشرة عن أي مصطلح أو معنى..."
+                  oninput="onSearchInput(this.value)"
+                  class="w-full px-5 py-4 rounded-2xl bg-white text-slate-900 placeholder-slate-400 font-bold text-base shadow-lg focus:outline-none focus:ring-2 focus:ring-amber-400"
+                />
+              </div>
+            </div>
+
+            <div class="space-y-3">
+              <h2 class="text-base font-extrabold text-slate-700 dark:text-slate-300 px-1">اختر المعجم للتصفح:</h2>
+              ${{state.allDictionaries.map(dict => `
+                <button onclick="selectDictionary('${{dict.id}}')" class="w-full p-5 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 shadow-sm hover:border-teal-500 active:scale-[0.99] transition text-right flex items-center justify-between gap-4">
+                  <div class="space-y-1">
+                    <span class="inline-block px-3 py-1 rounded-xl bg-teal-50 dark:bg-teal-950/70 text-teal-700 dark:text-teal-300 text-xs font-extrabold">${{escapeHtml(dict.category)}}</span>
+                    <h3 class="text-lg font-extrabold text-slate-900 dark:text-white">${{escapeHtml(dict.title)}}</h3>
+                    <p class="text-xs text-slate-500 dark:text-slate-400 line-clamp-2">${{escapeHtml(dict.description)}}</p>
+                  </div>
+                  <div class="w-12 h-12 rounded-2xl bg-teal-600 text-white flex items-center justify-center font-extrabold text-lg shrink-0 shadow-md">←</div>
+                </button>
+              `).join('')}}
+            </div>
+
+            <div class="bg-white dark:bg-slate-900 rounded-3xl p-5 border border-slate-200/90 dark:border-slate-800 shadow-sm space-y-3">
+              <h3 class="text-base font-extrabold text-slate-900 dark:text-white">كيف تستخدم التطبيق ببساطة؟</h3>
+              <div class="grid grid-cols-1 gap-2.5 text-sm text-slate-700 dark:text-slate-300">
+                <div class="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60">
+                  🔍 <strong>بحث ذكي وشامل:</strong> اكتب الكلمة أو معناها في شريط البحث وسيظهر لك المصطلح فوراً حتى بدون كتابة دقيقة.
+                </div>
+                <div class="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60">
+                  📦 <strong>بوكسات كبيرة وواضحة:</strong> اضغط على أي مصطلح ليفتح لك الشرح الكامل بخط كبير ومريح مع أزرار <strong>النسخ والمشاركة</strong>.
+                </div>
+                <div class="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60">
+                  🌙 <strong>تخصيص المظهر والخط:</strong> من تبويب <strong>"عن المعجم"</strong> بالأسفل يمكنك التبديل بين الثيم الأبيض والأسود وتكبير الخط.
+                </div>
+              </div>
+            </div>
+          </div>
+        `;
+      }}
+
+      // ٢. شاشة المعجم والمحفوظات (بوكسات كبيرة وعدد أقل بدون أرقام صفحات)
       if (state.activeTab === 'dictionary' || state.activeTab === 'bookmarks') {{
         const slice = filtered.slice(0, state.visibleCount);
-        const allOpen = slice.length > 0 && slice.every(e => state.expandedIds.has(e.id));
-
         const cardsHtml = slice.length === 0
-          ? `<div class="bg-white dark:bg-slate-900 rounded-3xl p-8 text-center border border-slate-200 dark:border-slate-800 my-4">
-               <p class="text-sm font-bold mb-1">${{state.activeTab === 'bookmarks' ? 'لا توجد مصطلحات محفوظة في المفضلة بعد' : 'لم يتم العثور على نتائج مطابقة'}}</p>
-               <p class="text-xs text-slate-500 dark:text-slate-400">جرب البحث بكلمة أخرى أو اختر "الكل" من شريط الحروف.</p>
+          ? `<div class="bg-white dark:bg-slate-900 rounded-3xl p-10 text-center border border-slate-200 dark:border-slate-800 my-4">
+               <p class="text-lg font-extrabold mb-1">${{state.activeTab === 'bookmarks' ? 'لا توجد مصطلحات محفوظة بعد' : 'لم يتم العثور على نتائج مطابقة'}}</p>
+               <p class="text-sm text-slate-500 dark:text-slate-400">جرب البحث بكلمة أخرى أو اختر "الكل" من شريط الحروف.</p>
              </div>`
           : slice.map(entry => {{
               const isOpen = state.expandedIds.has(entry.id);
@@ -313,38 +389,36 @@ html_template = f"""<!DOCTYPE html>
               const refMatch = entry.definition.match(/راجع\\s+(?:لفظ|كلمة)?\\s*[«"(\\[]?([^»")\\].،]{{2,25}})[»")\\]]?/);
 
               return `
-                <div onclick="toggleCard('${{entry.id}}')" class="rounded-2xl transition-all duration-200 cursor-pointer border ${{isOpen ? 'bg-white dark:bg-slate-900 border-teal-500/60 shadow-md ring-1 ring-teal-500/20' : 'bg-white/95 dark:bg-slate-900/85 hover:bg-white dark:hover:bg-slate-900 border-slate-200/90 dark:border-slate-800 shadow-sm active:scale-[0.99]'}}">
-                  <div class="p-3.5 flex items-center justify-between gap-3">
-                    <div class="flex items-center gap-3 min-w-0">
-                      <div class="w-9 h-9 rounded-xl flex items-center justify-center font-bold text-sm shrink-0 ${{isOpen ? 'bg-teal-600 text-white shadow-sm' : 'bg-teal-50 dark:bg-slate-800 text-teal-700 dark:text-teal-400 border border-teal-200/50 dark:border-slate-700'}}">
+                <div onclick="toggleCard('${{entry.id}}')" class="rounded-3xl transition-all duration-200 cursor-pointer border ${{isOpen ? 'bg-white dark:bg-slate-900 border-teal-500 shadow-lg ring-2 ring-teal-500/20' : 'bg-white dark:bg-slate-900/90 border-slate-200/90 dark:border-slate-800 shadow-sm active:scale-[0.99]'}}">
+                  <div class="p-5 flex items-center justify-between gap-3">
+                    <div class="flex items-center gap-3.5 min-w-0">
+                      <div class="w-12 h-12 rounded-2xl flex items-center justify-center font-extrabold text-lg shrink-0 ${{isOpen ? 'bg-teal-600 text-white shadow-md' : 'bg-teal-50 dark:bg-slate-800 text-teal-700 dark:text-teal-400 border border-teal-200/60 dark:border-slate-700'}}">
                         ${{escapeHtml(firstChar)}}
                       </div>
                       <div class="min-w-0">
-                        <h2 class="text-base font-extrabold text-slate-900 dark:text-white leading-snug">${{escapeHtml(entry.term)}}</h2>
-                        ${{!isOpen ? `<p class="text-[11px] text-slate-500 dark:text-slate-400 truncate mt-0.5">اضغط لعرض الجواب • باب ${{escapeHtml(entry.letter)}} (ص ${{entry.page}})</p>` : ''}}
+                        <h2 class="text-xl font-extrabold text-slate-900 dark:text-white leading-snug">${{escapeHtml(entry.term)}}</h2>
+                        ${{!isOpen ? `<p class="text-xs text-slate-500 dark:text-slate-400 mt-1">اضغط لعرض الجواب • باب ${{escapeHtml(entry.letter)}}</p>` : ''}}
                       </div>
                     </div>
-                    <div class="flex items-center gap-1 shrink-0">
-                      <span class="text-[10px] font-bold px-2 py-0.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400">ص ${{entry.page}}</span>
-                      <button onclick="toggleBookmark('${{entry.id}}', event)" class="p-2 rounded-xl ${{isFav ? 'text-amber-500 bg-amber-50 dark:bg-amber-950/40' : 'text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'}}" title="حفظ">
+                    <div class="flex items-center gap-2 shrink-0">
+                      <button onclick="toggleBookmark('${{entry.id}}', event)" class="p-2.5 rounded-2xl text-lg ${{isFav ? 'text-amber-500 bg-amber-50 dark:bg-amber-950/40' : 'text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'}}" title="حفظ">
                         ${{isFav ? '★' : '☆'}}
                       </button>
-                      <span class="w-6 h-6 flex items-center justify-center text-xs transition-transform ${{isOpen ? 'rotate-180 text-teal-600 font-bold' : 'text-slate-400'}}">▼</span>
+                      <span class="w-8 h-8 flex items-center justify-center text-sm transition-transform ${{isOpen ? 'rotate-180 text-teal-600 font-bold' : 'text-slate-400'}}">▼</span>
                     </div>
                   </div>
                   ${{isOpen ? `
-                    <div onclick="event.stopPropagation()" class="px-3.5 pb-3.5 pt-2 border-t border-slate-100 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-900/50 rounded-b-2xl cursor-auto select-text">
-                      <p class="font-serif text-slate-800 dark:text-slate-200 ${{fontClass}} bg-white dark:bg-slate-950/70 p-3.5 rounded-xl border border-slate-200/70 dark:border-slate-800 shadow-inner">
+                    <div onclick="event.stopPropagation()" class="px-5 pb-5 pt-2 border-t border-slate-100 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-900/50 rounded-b-3xl cursor-auto select-text">
+                      <p class="font-serif text-slate-800 dark:text-slate-100 ${{fontClass}} bg-white dark:bg-slate-950/80 p-4 rounded-2xl border border-slate-200/70 dark:border-slate-800 shadow-inner">
                         ${{escapeHtml(entry.definition)}}
                       </p>
-                      <div class="flex flex-wrap items-center gap-1.5 mt-2.5 mb-3">
-                        <span class="text-[11px] font-bold px-2.5 py-1 rounded-lg bg-teal-100/80 dark:bg-teal-950/80 text-teal-800 dark:text-teal-300">باب حرف ${{escapeHtml(entry.letter)}} • صفحة ${{entry.page}}</span>
-                        ${{(entry.sources || []).map(s => `<span class="text-[11px] px-2 py-1 rounded-lg bg-slate-200/70 dark:bg-slate-800 text-slate-700 dark:text-slate-300">📚 ${{escapeHtml(s)}}</span>`).join('')}}
-                        ${{refMatch ? `<button onclick="jumpToTerm('${{escapeHtml(refMatch[1])}}', event)" class="text-[11px] font-bold px-2.5 py-1 rounded-lg bg-amber-100 dark:bg-amber-950/70 text-amber-800 dark:text-amber-300">↗ راجع: ${{escapeHtml(refMatch[1])}}</button>` : ''}}
+                      <div class="flex flex-wrap items-center gap-2 mt-3 mb-4">
+                        <span class="text-xs font-bold px-3 py-1 rounded-xl bg-teal-100/80 dark:bg-teal-950/80 text-teal-800 dark:text-teal-300">باب حرف ${{escapeHtml(entry.letter)}}</span>
+                        ${{refMatch ? `<button onclick="jumpToTerm('${{escapeHtml(refMatch[1])}}', event)" class="text-xs font-bold px-3 py-1 rounded-xl bg-amber-100 dark:bg-amber-950/70 text-amber-800 dark:text-amber-300">↗ راجع: ${{escapeHtml(refMatch[1])}}</button>` : ''}}
                       </div>
-                      <div class="grid grid-cols-2 gap-2">
-                        <button onclick="copyEntry('${{entry.id}}', event)" class="py-2.5 rounded-xl bg-teal-600 hover:bg-teal-700 active:scale-95 text-white text-xs font-bold shadow-sm transition">📋 نسخ الجواب</button>
-                        <button onclick="shareEntry('${{entry.id}}', event)" class="py-2.5 rounded-xl bg-slate-800 dark:bg-slate-700 hover:bg-slate-900 active:scale-95 text-white text-xs font-bold shadow-sm transition">📤 مشاركة</button>
+                      <div class="grid grid-cols-2 gap-3">
+                        <button onclick="copyEntry('${{entry.id}}', event)" class="py-3.5 rounded-2xl bg-teal-600 hover:bg-teal-700 active:scale-95 text-white text-sm font-extrabold shadow-md transition">📋 نسخ الجواب</button>
+                        <button onclick="shareEntry('${{entry.id}}', event)" class="py-3.5 rounded-2xl bg-slate-800 dark:bg-slate-700 hover:bg-slate-900 active:scale-95 text-white text-sm font-extrabold shadow-md transition">📤 مشاركة</button>
                       </div>
                     </div>
                   ` : ''}}
@@ -353,53 +427,48 @@ html_template = f"""<!DOCTYPE html>
             }}).join('');
 
         return `
-          <div class="flex items-center justify-between mb-2.5 px-1 text-xs text-slate-600 dark:text-slate-400">
-            <span>${{state.activeTab === 'bookmarks' ? 'المحفوظات: ' : 'النتائج: '}}<strong class="text-slate-900 dark:text-white">${{filtered.length}}</strong> مصطلح ${{state.selectedLetter !== 'الكل' ? `• باب ${{state.selectedLetter}}` : ''}}</span>
-            <button onclick="toggleAllVisible()" class="text-[11px] font-bold text-teal-700 dark:text-teal-400 px-2.5 py-1 rounded-lg bg-teal-50 dark:bg-slate-800 border border-teal-200/60 dark:border-slate-700">
-              ${{allOpen ? 'طي الكل' : 'فتح الكل'}}
-            </button>
-          </div>
-          <div class="space-y-2.5">${{cardsHtml}}</div>
+          <div class="space-y-3.5">${{cardsHtml}}</div>
           ${{filtered.length > state.visibleCount ? `
-            <button onclick="loadMore()" class="mt-3 w-full py-3.5 rounded-2xl bg-white dark:bg-slate-900 text-teal-700 dark:text-teal-400 font-bold text-xs sm:text-sm border border-slate-200 dark:border-slate-800 shadow-sm">
-              عرض المزيد من المصطلحات (${{filtered.length - state.visibleCount}} متبقية)
+            <button onclick="loadMore()" class="mt-4 w-full py-4 rounded-3xl bg-white dark:bg-slate-900 text-teal-700 dark:text-teal-400 font-extrabold text-base border border-slate-200 dark:border-slate-800 shadow-sm">
+              عرض المزيد (${{filtered.length - state.visibleCount}} متبقية)
             </button>
           ` : ''}}
         `;
       }}
 
-      if (state.activeTab === 'index') {{
-        return `
-          <div class="space-y-4">
-            <div class="bg-white dark:bg-slate-900 rounded-3xl p-4 sm:p-5 border border-slate-200 dark:border-slate-800 shadow-sm">
-              <h2 class="text-base sm:text-lg font-extrabold mb-1">فهرس ${{escapeHtml(currentDict.category)}}</h2>
-              <p class="text-xs text-slate-500 dark:text-slate-400 mb-4">${{escapeHtml(currentDict.title)}} • مفهرس حسب الحروف الأبجدية والصفحات</p>
-              <div class="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                ${{ARABIC_CHAPTERS.slice(1).map(c => `
-                  <button onclick="selectLetter('${{c.letter}}')" class="flex items-center justify-between p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/70 hover:bg-teal-50 dark:hover:bg-teal-950/40 border border-slate-200/80 dark:border-slate-700/80 text-right">
-                    <div class="flex items-center gap-2">
-                      <span class="w-8 h-8 rounded-xl bg-teal-600/10 text-teal-700 dark:text-teal-300 font-extrabold flex items-center justify-center text-sm">${{c.short}}</span>
-                      <div>
-                        <div class="font-bold text-xs sm:text-sm">باب ${{c.letter}}</div>
-                        <div class="text-[10px] text-slate-500">ص ${{c.startPage}}</div>
-                      </div>
-                    </div>
-                    <span class="text-xs font-extrabold px-2 py-0.5 rounded-lg bg-white dark:bg-slate-900 text-teal-700 dark:text-teal-400 border border-slate-200 dark:border-slate-700">${{counts[c.letter] || 0}}</span>
-                  </button>
-                `).join('')}}
+      // ٣. شاشة عن المعجم + اختيار الثيم الأبيض والأسود وحجم الخط
+      return `
+        <div class="space-y-4">
+          <div class="bg-white dark:bg-slate-900 rounded-3xl p-6 border border-slate-200 dark:border-slate-800 shadow-sm space-y-3">
+            <h2 class="text-xl font-extrabold">${{escapeHtml(currentDict.title)}}</h2>
+            <p class="text-sm text-teal-700 dark:text-teal-400 font-bold">${{escapeHtml(currentDict.author)}} • ${{escapeHtml(currentDict.publisher)}}</p>
+            <p class="text-base leading-relaxed font-serif text-slate-700 dark:text-slate-300">
+              ${{escapeHtml(currentDict.description)}}
+            </p>
+          </div>
+
+          <div class="bg-white dark:bg-slate-900 rounded-3xl p-6 border border-slate-200 dark:border-slate-800 shadow-sm space-y-4">
+            <h3 class="text-lg font-extrabold text-slate-900 dark:text-white">مظهر التطبيق والثيم</h3>
+            <div class="grid grid-cols-2 gap-3">
+              <button onclick="setThemeMode(false)" class="p-4 rounded-2xl border-2 flex flex-col items-center gap-2 font-extrabold text-base transition ${{!state.darkMode ? 'border-teal-600 bg-teal-50 text-teal-900 shadow-sm' : 'border-slate-200 dark:border-slate-800 text-slate-500'}}">
+                <span class="text-2xl">☀️</span>
+                <span>ثيم أبيض (نهاري)</span>
+              </button>
+              <button onclick="setThemeMode(true)" class="p-4 rounded-2xl border-2 flex flex-col items-center gap-2 font-extrabold text-base transition ${{state.darkMode ? 'border-teal-500 bg-slate-800 text-white shadow-sm' : 'border-slate-200 text-slate-600'}}">
+                <span class="text-2xl">🌙</span>
+                <span>ثيم أسود (ليلي)</span>
+              </button>
+            </div>
+
+            <div class="pt-3 border-t border-slate-100 dark:border-slate-800">
+              <div class="text-sm font-bold text-slate-600 dark:text-slate-300 mb-2.5">حجم خط الشرح والجواب:</div>
+              <div class="grid grid-cols-3 gap-2">
+                <button onclick="setFontSize('sm')" class="py-3 rounded-xl font-extrabold text-sm border ${{state.fontSize === 'sm' ? 'bg-teal-600 text-white border-teal-600' : 'bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700'}}">متوسط</button>
+                <button onclick="setFontSize('md')" class="py-3 rounded-xl font-extrabold text-sm border ${{state.fontSize === 'md' ? 'bg-teal-600 text-white border-teal-600' : 'bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700'}}">كبير</button>
+                <button onclick="setFontSize('lg')" class="py-3 rounded-xl font-extrabold text-sm border ${{state.fontSize === 'lg' ? 'bg-teal-600 text-white border-teal-600' : 'bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700'}}">كبير جداً</button>
               </div>
             </div>
           </div>
-        `;
-      }}
-
-      return `
-        <div class="bg-white dark:bg-slate-900 rounded-3xl p-5 border border-slate-200 dark:border-slate-800 shadow-sm space-y-3">
-          <h2 class="text-base font-extrabold">${{escapeHtml(currentDict.title)}}</h2>
-          <p class="text-xs text-teal-700 dark:text-teal-400 font-bold">${{escapeHtml(currentDict.author)}} • ${{escapeHtml(currentDict.publisher)}}</p>
-          <p class="text-sm leading-relaxed font-serif text-slate-700 dark:text-slate-300">
-            ${{escapeHtml(currentDict.description)}}
-          </p>
         </div>
       `;
     }}
@@ -410,74 +479,61 @@ html_template = f"""<!DOCTYPE html>
     }}
 
     function renderApp() {{
-      const {{ currentDict, counts }} = getFilteredData();
+      const {{ currentDict }} = getFilteredData();
       const appEl = document.getElementById('app');
+      const showHeader = state.activeTab === 'dictionary' || state.activeTab === 'bookmarks';
+
       appEl.innerHTML = `
         <div class="min-h-screen flex flex-col">
-          <header class="sticky top-0 z-30 bg-gradient-to-l from-teal-800 via-teal-700 to-emerald-800 dark:from-slate-900 dark:via-slate-900 dark:to-teal-950 text-white shadow-lg border-b border-teal-600/30 dark:border-slate-800">
-            <div class="max-w-md sm:max-w-2xl mx-auto px-3.5 pt-3 pb-2.5">
-              <div class="flex items-center justify-between gap-2 mb-2.5">
-                <div class="flex items-center gap-2.5">
-                  <div class="w-10 h-10 rounded-2xl bg-white/15 flex items-center justify-center border border-white/20 text-lg">📘</div>
-                  <div>
-                    <h1 class="text-lg sm:text-xl font-extrabold leading-tight">المعجم</h1>
-                    <p class="text-[11px] text-teal-100/85 line-clamp-1">${{escapeHtml(currentDict.title)}}</p>
-                  </div>
+          ${{showHeader ? `
+            <header class="sticky top-0 z-30 bg-gradient-to-l from-teal-800 via-teal-700 to-emerald-800 dark:from-slate-900 dark:via-slate-900 dark:to-teal-950 text-white shadow-lg">
+              <div class="max-w-lg mx-auto px-3.5 pt-3.5 pb-3 space-y-3">
+                <!-- التابات الثلاثة الكبيرة والواضحة بدون أي زحمة فوقها -->
+                <div class="grid grid-cols-3 gap-2 p-1.5 rounded-2xl bg-black/25 dark:bg-slate-950/70 border border-white/10">
+                  ${{state.allDictionaries.map(d => `
+                    <button onclick="selectDictionary('${{d.id}}')" class="py-3 px-2 rounded-xl text-sm sm:text-base font-extrabold text-center transition-all ${{d.id === currentDict.id ? 'bg-white text-teal-900 shadow-md scale-[1.02]' : 'text-teal-50/90 hover:bg-white/10'}}">
+                      ${{escapeHtml(d.category)}}
+                    </button>
+                  `).join('')}}
                 </div>
-                <div class="flex items-center gap-1.5">
-                  <button onclick="cycleFontSize()" class="px-2.5 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-xs font-bold border border-white/15">ع+</button>
-                  <button onclick="toggleTheme()" class="px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-xs font-bold border border-white/15">
-                    ${{state.darkMode ? '☀️ ثيم أبيض' : '🌙 ثيم أسود'}}
-                  </button>
+
+                <!-- شريط البحث الذكي الكبير والمبسط -->
+                <div class="relative flex items-center">
+                  <input
+                    id="search-input"
+                    type="text"
+                    value="${{escapeHtml(state.searchQuery)}}"
+                    oninput="onSearchInput(this.value)"
+                    placeholder="🔍 ابحث عن أي كلمة أو معنى أو محتوى..."
+                    class="w-full px-4 py-3.5 rounded-2xl bg-white/15 dark:bg-slate-800/95 text-white placeholder-teal-100/85 border border-white/25 focus:outline-none focus:ring-2 focus:ring-amber-400 text-base font-medium"
+                  />
+                  ${{state.searchQuery ? `<button onclick="clearSearch()" class="absolute left-3 px-2.5 py-1 rounded-full bg-black/30 text-white text-xs font-bold">✕</button>` : ''}}
                 </div>
               </div>
 
-              <!-- التابات الثلاثة الرئيسية: (معجم فقهي) (معجم أصولي) (معجم لغوي) -->
-              <div class="grid grid-cols-3 gap-1.5 p-1 rounded-2xl bg-black/20 dark:bg-slate-950/60 border border-white/10 mb-2.5">
-                ${{state.allDictionaries.map(d => `
-                  <button onclick="selectDictionary('${{d.id}}')" class="py-2 px-2 rounded-xl text-xs sm:text-sm font-extrabold text-center transition-all ${{d.id === currentDict.id ? 'bg-white text-teal-900 shadow-md scale-[1.01]' : 'text-teal-50/90 hover:bg-white/10'}}">
-                    ${{escapeHtml(d.category)}}
-                  </button>
-                `).join('')}}
+              <!-- شريط الحروف الأبجدية المبسط بدون أرقام مزعجة -->
+              <div class="bg-teal-900/60 dark:bg-slate-900/95 border-t border-white/10">
+                <div class="max-w-lg mx-auto px-3 py-2.5 flex items-center gap-2 overflow-x-auto no-scrollbar">
+                  ${{ARABIC_CHAPTERS.map(c => `
+                    <button onclick="selectLetter('${{c.letter}}')" class="px-4 py-1.5 rounded-xl text-sm font-extrabold whitespace-nowrap ${{state.selectedLetter === c.letter ? 'bg-amber-400 text-slate-950 shadow-md scale-105' : 'bg-white/10 text-teal-50 hover:bg-white/20'}}">
+                      ${{c.letter === 'الكل' ? 'الكل' : 'باب ' + c.letter}}
+                    </button>
+                  `).join('')}}
+                </div>
               </div>
+            </header>
+          ` : ''}}
 
-              <div class="relative flex items-center">
-                <input
-                  id="search-input"
-                  type="text"
-                  value="${{escapeHtml(state.searchQuery)}}"
-                  oninput="onSearchInput(this.value)"
-                  placeholder="ابحث بالكلمة أو بالمعنى أو داخل المحتوى..."
-                  class="w-full pr-4 pl-28 py-2.5 rounded-2xl bg-white/15 dark:bg-slate-800/90 text-white placeholder-teal-100/75 border border-white/20 focus:outline-none focus:ring-2 focus:ring-amber-400 text-xs sm:text-sm"
-                />
-                <button onclick="toggleSearchScope()" class="absolute left-2 px-2.5 py-1 rounded-xl text-[10px] sm:text-[11px] font-bold bg-teal-950/60 text-amber-300 border border-white/15">
-                  ${{state.searchScope === 'all' ? 'شامل للمحتوى' : 'الكلمة فقط'}}
-                </button>
-              </div>
-            </div>
-
-            <div class="bg-teal-900/50 dark:bg-slate-900/90 border-t border-white/10">
-              <div class="max-w-md sm:max-w-2xl mx-auto px-3 py-2 flex items-center gap-1.5 overflow-x-auto no-scrollbar">
-                ${{ARABIC_CHAPTERS.map(c => `
-                  <button onclick="selectLetter('${{c.letter}}')" class="px-3 py-1 rounded-xl text-xs font-bold whitespace-nowrap flex items-center gap-1 ${{state.selectedLetter === c.letter ? 'bg-amber-400 text-slate-950 shadow-sm' : 'bg-white/10 text-teal-50 hover:bg-white/20'}}">
-                    <span>${{c.letter === 'الكل' ? 'الكل' : 'باب ' + c.letter}}</span>
-                    <span class="text-[10px] opacity-80">${{counts[c.letter] || 0}}</span>
-                  </button>
-                `).join('')}}
-              </div>
-            </div>
-          </header>
-
-          <main id="main-content" class="flex-1 max-w-md sm:max-w-2xl w-full mx-auto px-3 pt-3 pb-24">
+          <main id="main-content" class="flex-1 max-w-lg w-full mx-auto px-3.5 pt-4 pb-28">
             ${{renderMainSection()}}
           </main>
 
           <nav class="fixed bottom-0 inset-x-0 z-40 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-slate-200 dark:border-slate-800 shadow-2xl">
-            <div class="max-w-md sm:max-w-2xl mx-auto px-3 py-1.5 grid grid-cols-4 gap-1 text-center">
-              <button onclick="switchTab('dictionary')" class="py-1.5 rounded-2xl text-xs ${{state.activeTab === 'dictionary' ? 'text-teal-700 dark:text-teal-400 bg-teal-50 dark:bg-teal-950/50 font-extrabold' : 'text-slate-500'}}">📘 المعجم</button>
-              <button onclick="switchTab('index')" class="py-1.5 rounded-2xl text-xs ${{state.activeTab === 'index' ? 'text-teal-700 dark:text-teal-400 bg-teal-50 dark:bg-teal-950/50 font-extrabold' : 'text-slate-500'}}">📑 الفهرس</button>
-              <button onclick="switchTab('bookmarks')" class="py-1.5 rounded-2xl text-xs ${{state.activeTab === 'bookmarks' ? 'text-teal-700 dark:text-teal-400 bg-teal-50 dark:bg-teal-950/50 font-extrabold' : 'text-slate-500'}}">★ المحفوظات (${{state.bookmarks.length}})</button>
-              <button onclick="switchTab('about')" class="py-1.5 rounded-2xl text-xs ${{state.activeTab === 'about' ? 'text-teal-700 dark:text-teal-400 bg-teal-50 dark:bg-teal-950/50 font-extrabold' : 'text-slate-500'}}">ℹ️ عن المعجم</button>
+            <div class="max-w-lg mx-auto px-3 py-2 grid grid-cols-4 gap-1.5 text-center">
+              <button onclick="switchTab('home')" class="py-2 rounded-2xl text-xs sm:text-sm ${{state.activeTab === 'home' ? 'text-teal-700 dark:text-teal-400 bg-teal-50 dark:bg-teal-950/60 font-extrabold' : 'text-slate-500'}}">🏠 الرئيسية</button>
+              <button onclick="switchTab('dictionary')" class="py-2 rounded-2xl text-xs sm:text-sm ${{state.activeTab === 'dictionary' ? 'text-teal-700 dark:text-teal-400 bg-teal-50 dark:bg-teal-950/60 font-extrabold' : 'text-slate-500'}}">📘 المعجم</button>
+              <button onclick="switchTab('bookmarks')" class="py-2 rounded-2xl text-xs sm:text-sm ${{state.activeTab === 'bookmarks' ? 'text-teal-700 dark:text-teal-400 bg-teal-50 dark:bg-teal-950/60 font-extrabold' : 'text-slate-500'}}">★ المحفوظات (${{state.bookmarks.length}})</button>
+              <button onclick="switchTab('about')" class="py-2 rounded-2xl text-xs sm:text-sm ${{state.activeTab === 'about' ? 'text-teal-700 dark:text-teal-400 bg-teal-50 dark:bg-teal-950/60 font-extrabold' : 'text-slate-500'}}">ℹ️ عن المعجم</button>
             </div>
           </nav>
         </div>
@@ -497,4 +553,4 @@ os.makedirs(dist_dir, exist_ok=True)
 with open(os.path.join(dist_dir, 'index.html'), 'w', encoding='utf-8') as f:
     f.write(html_template)
 
-print("Generated mobile user-only bundle at dist/index.html")
+print("Generated simplified large mobile bundle at dist/index.html")
