@@ -216641,7 +216641,17 @@ function smartSearchEntries(entries, rawQuery, options = {}) {
     return filtered;
   }
 
-  const queryTokens = normQuery.split(' ').filter(Boolean);
+  const STOP_WORDS = new Set([
+    'ما', 'ماذا', 'من', 'هل', 'كيف', 'اين', 'متي', 'لماذا', 'كم', 'اي',
+    'هو', 'هي', 'هم', 'ها', 'ان', 'كان', 'يكون', 'تكون', 'في', 'من',
+    'الي', 'علي', 'عن', 'مع', 'او', 'ثم', 'بل', 'لا', 'لم', 'لن',
+    'هذا', 'هذه', 'ذلك', 'تلك', 'الذي', 'التي', 'الذين', 'معني', 'تفسير',
+    'شرح', 'مراد', 'حكم', 'كلمه', 'مصطلح', 'عباره', 'يعني', 'شنو', 'شو', 'ايش'
+  ]);
+
+  const rawTokens = normQuery.split(' ').filter(Boolean);
+  const meaningfulTokens = rawTokens.filter((t) => !STOP_WORDS.has(t));
+  const queryTokens = meaningfulTokens.length > 0 ? meaningfulTokens : rawTokens;
   const queryStems = queryTokens.map(stemArabicWord);
 
   // توسيع البحث بالمرادفات الدلالية
