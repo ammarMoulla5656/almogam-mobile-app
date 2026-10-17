@@ -126,7 +126,7 @@ html_template = f"""<!DOCTYPE html>
       provider: 'openai',
       modelsByProvider: {{
         openai: 'gpt-4o-mini',
-        gemini: 'gemini-2.5-flash',
+        gemini: 'gemini-3.8-flash',
         deepseek: 'deepseek-chat',
         claude: 'claude-3-7-sonnet-latest'
       }},
@@ -147,10 +147,12 @@ html_template = f"""<!DOCTYPE html>
         const saved = localStorage.getItem(STORAGE_KEYS.AI_CONFIG);
         if (!saved) return JSON.parse(JSON.stringify(DEFAULT_AI_CONFIG));
         const parsed = JSON.parse(saved);
+        const mergedModels = {{ ...DEFAULT_AI_CONFIG.modelsByProvider, ...(parsed.modelsByProvider || {{}}) }};
+        mergedModels.gemini = normalizeGeminiModelName(mergedModels.gemini);
         return {{
           ...DEFAULT_AI_CONFIG,
           ...parsed,
-          modelsByProvider: {{ ...DEFAULT_AI_CONFIG.modelsByProvider, ...(parsed.modelsByProvider || {{}}) }},
+          modelsByProvider: mergedModels,
           apiKeysByProvider: {{ ...DEFAULT_AI_CONFIG.apiKeysByProvider, ...(parsed.apiKeysByProvider || {{}}) }}
         }};
       }} catch {{

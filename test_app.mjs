@@ -4,8 +4,12 @@ import { prepareEntryForSearch } from './src/utils/smartSearch.js';
 import {
   DEFAULT_VECTOR_STORE_ID,
   DEFAULT_SYSTEM_PROMPT,
+  AI_PROVIDERS,
+  normalizeGeminiModelName,
   buildOpenAiResponsesRequestBody,
   parseOpenAiResponsesOutput,
+  buildGeminiInteractionsRequestBody,
+  parseGeminiInteractionsOutput,
   findFullEntryInDictionaries,
   convertLogsToCsv,
   computeBenchmarkStats
@@ -124,4 +128,66 @@ console.log(
   `✅ Test 4 passed: Benchmark analytics verified -> Best model: ${stats.bestAccuracyModel.model} (${stats.bestAccuracyModel.goodRate}%)`
 );
 
-console.log('🎉 All OpenAI Responses API + Vector Store RAG tests passed!');
+// Test 5: Google Gemini Interactions API (https://ai.google.dev/gemini-api/docs/get-started)
+const geminiProvider = AI_PROVIDERS.find((p) => p.id === 'gemini');
+console.assert(
+  geminiProvider.defaultModel === 'gemini-3.8-flash',
+  'Default Gemini model should be gemini-3.8-flash'
+);
+console.assert(
+  normalizeGeminiModelName('models/gemini-2.5-flash-lite') === 'gemini-3.5-flash-lite',
+  'Legacy gemini-2.5-flash-lite should normalize to gemini-3.5-flash-lite'
+);
+console.assert(
+  normalizeGeminiModelName('gemini-2.5-flash') === 'gemini-3.8-flash',
+  'Legacy gemini-2.5-flash should normalize to gemini-3.8-flash'
+);
+
+const geminiReq = buildGeminiInteractionsRequestBody({
+  model: 'models/gemini-2.5-flash-lite',
+  instructions: DEFAULT_SYSTEM_PROMPT,
+  userQuery: 'الابتهال',
+  scopeFilter: 'fiqhi_main',
+  localContextText: '[1] id: fiqh_1 | المصطلح: الابتهال | المعجم: fiqhi_main | ص: 11 | النص: راجع لفظ التعوذ'
+});
+console.assert(geminiReq.model === 'gemini-3.5-flash-lite', 'Gemini Interactions request model mismatch');
+console.assert(geminiReq.response_format.mime_type === 'application/json', 'Gemini response_format mime_type mismatch');
+
+const mockGeminiInteractionsResponse = {
+  id: 'inter_123',
+  status: 'completed',
+  usage: {
+    total_input_tokens: 210,
+    total_output_tokens: 80,
+    total_tokens: 290
+  },
+  steps: [
+    { type: 'thought', content: [{ type: 'text', text: 'Searching dictionary...' }] },
+    {
+      type: 'model_output',
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify({
+            results: [
+              {
+                id: 'fiqh_1',
+                term: 'الابتهال',
+                dictionaryId: 'fiqhi_main',
+                page: 11,
+                short_meaning: 'التضرع والدعاء بإخلاص.',
+                source: 'الاصطلاحات الفقهية'
+              }
+            ],
+            message: ''
+          })
+        }
+      ]
+    }
+  ]
+};
+const parsedGemini = parseGeminiInteractionsOutput(mockGeminiInteractionsResponse);
+console.assert(parsedGemini.results.length === 1 && parsedGemini.results[0].term === 'الابتهال', 'Gemini Interactions output parsing failed');
+console.log('✅ Test 5 passed: Google Gemini Interactions API (/v1beta/interactions) & model list verified.');
+
+console.log('🎉 All OpenAI Responses API + Google Gemini Interactions API tests passed!');

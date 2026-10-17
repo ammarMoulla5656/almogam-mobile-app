@@ -142164,13 +142164,12 @@ function smartSearchEntries(entries, rawQuery, options = {}) {
 }
 
     /**
- * محرك البحث الدلالي السحابي والمحلي (OpenAI Responses API + File Search Vector Store RAG & Benchmarking)
- * - يدعم OpenAI Responses API (/v1/responses) مع أداة file_search ومخزن المتجهات Vector Store:
- *   vs_6ad37a3dabac81918cc341f5c2bd0d02
- * - يطبق Structured Outputs (json_schema: dictionary_search_results) بصرامة.
- * - يستخرج النتائج من output_text أو من مصفوفة output -> message -> content[0].text.
- * - يستخرج بيانات التوكنات (input_tokens, output_tokens, total_tokens) وزمن الاستجابة بالثواني.
- * - يدعم أيضاً التبديل لمزودات أخرى للتجربة والمقارنة (Gemini, DeepSeek, Claude) مع إرجاع نفس هيكل الـ JSON الموحد.
+ * محرك البحث الدلالي السحابي والمحلي:
+ * 1. OpenAI Responses API (/v1/responses) مع أداة file_search ومخزن المتجهات Vector Store:
+ *    vs_6ad37a3dabac81918cc341f5c2bd0d02
+ * 2. Google Gemini Interactions API الرسمية (https://generativelanguage.googleapis.com/v1beta/interactions)
+ *    وفق التوثيق الرسمي (https://ai.google.dev/gemini-api/docs/get-started) والنماذج المعتمدة:
+ *    gemini-3.8-flash, gemini-3.5-flash-lite, gemini-4-argon, gemini-3.6-flash, gemini-3.1-flash-lite, gemini-3.1-pro-preview, gemini-3-flash-preview
  */
 
 
@@ -142194,13 +142193,21 @@ const AI_PROVIDERS = [
     id: 'openai',
     name: 'OpenAI (Responses API + File Search)',
     defaultModel: 'gpt-4o-mini',
-    suggestedModels: ['gpt-4o-mini', 'gpt-4o', 'o3-mini', 'gpt-4.1-mini']
+    suggestedModels: ['gpt-4o-mini', 'gpt-4o', 'o3-mini']
   },
   {
     id: 'gemini',
-    name: 'Google Gemini',
-    defaultModel: 'gemini-2.5-flash',
-    suggestedModels: ['gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.5-pro']
+    name: 'Google Gemini (Interactions API)',
+    defaultModel: 'gemini-3.8-flash',
+    suggestedModels: [
+      'gemini-3.8-flash',
+      'gemini-3.5-flash-lite',
+      'gemini-4-argon',
+      'gemini-3.6-flash',
+      'gemini-3.1-flash-lite',
+      'gemini-3.1-pro-preview',
+      'gemini-3-flash-preview'
+    ]
   },
   {
     id: 'deepseek',
@@ -142241,6 +142248,30 @@ const DICTIONARY_SEARCH_SCHEMA = {
   additionalProperties: false
 };
 
+// مخطط Structured Output المتوافق مع Gemini Interactions API (https://ai.google.dev/gemini-api/docs/structured-output)
+const GEMINI_INTERACTIONS_SCHEMA = {
+  type: 'object',
+  properties: {
+    results: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', description: 'معرف الكلمة في المعجم إن وجد مثل fiqh_647' },
+          term: { type: 'string', description: 'اسم المصطلح الدقيق كما ورد في المعجم' },
+          dictionaryId: { type: 'string', description: 'نوع المعجم مثل fiqhi_main' },
+          page: { type: 'integer', description: 'رقم الصفحة' },
+          short_meaning: { type: 'string', description: 'ملخص مكثف جداً للمعنى من نص المعجم لا يتجاوز 20 كلمة' },
+          source: { type: 'string', description: 'المصدر المذكور بين الأقواس باختصار' }
+        },
+        required: ['id', 'term', 'dictionaryId', 'page', 'short_meaning', 'source']
+      }
+    },
+    message: { type: 'string', description: 'رسالة قصيرة توضيحية' }
+  },
+  required: ['results', 'message']
+};
+
 const DICT_LABELS = {
   fiqhi_main: 'المعجم الفقهي',
   usuli_dict: 'المعجم الأصولي',
@@ -142249,6 +142280,20 @@ const DICT_LABELS = {
 
 function getDictionaryLabel(dictId) {
   return DICT_LABELS[dictId] || dictId || 'المعجم الفقهي';
+}
+
+/**
+ * ترقية أي اسم نموذج Gemini قديم محفوظ مسبقاً (مثل gemini-2.5-flash-lite) إلى النماذج المعتمدة في التوثيق الرسمي
+ */
+function normalizeGeminiModelName(model) {
+  const cleaned = String(model || '')
+    .replace(/^models\//i, '')
+    .trim();
+  if (!cleaned || cleaned === 'gemini-2.5-flash') return 'gemini-3.8-flash';
+  if (cleaned === 'gemini-2.5-flash-lite' || cleaned === 'gemini-2.0-flash-lite') return 'gemini-3.5-flash-lite';
+  if (cleaned === 'gemini-2.5-pro') return 'gemini-4-argon';
+  if (cleaned === 'gemini-2.0-flash') return 'gemini-3.8-flash';
+  return cleaned;
 }
 
 /**
@@ -142307,6 +142352,72 @@ function buildOpenAiResponsesRequestBody({
 }
 
 /**
+ * بناء جسم الطلب القياسي لـ Google Gemini Interactions API
+ * وفق التوثيق الرسمي: https://ai.google.dev/gemini-api/docs/get-started
+ */
+function buildGeminiInteractionsRequestBody({
+  model,
+  systemInstruction,
+  inputPrompt
+}) {
+  const cleanModel = normalizeGeminiModelName(model);
+  return {
+    model: cleanModel,
+    system_instruction: systemInstruction || DEFAULT_SYSTEM_PROMPT,
+    input: inputPrompt,
+    generation_config: {
+      temperature: 0.1,
+      max_output_tokens: 450
+    },
+    response_format: {
+      type: 'text',
+      mime_type: 'application/json',
+      schema: GEMINI_INTERACTIONS_SCHEMA
+    }
+  };
+}
+
+/**
+ * استخراج النص المخرج من استجابة Google Gemini Interactions API
+ * ({ steps: [{ type: "model_output", content: [{ type: "text", text: "..." }] }], usage: { total_tokens, total_input_tokens, total_output_tokens } })
+ */
+function parseGeminiInteractionsOutput(data) {
+  if (!data) {
+    return { results: [], message: 'لم ترد استجابة من خادم Gemini.' };
+  }
+
+  let rawText = '';
+
+  if (typeof data.output_text === 'string' && data.output_text.trim()) {
+    rawText = data.output_text.trim();
+  }
+
+  if (!rawText && Array.isArray(data.steps)) {
+    for (let i = data.steps.length - 1; i >= 0; i--) {
+      const step = data.steps[i];
+      if (step && step.type === 'model_output' && Array.isArray(step.content)) {
+        const texts = step.content
+          .filter((c) => c && (c.type === 'text' || typeof c.text === 'string'))
+          .map((c) => c.text || '')
+          .join('\n')
+          .trim();
+        if (texts) {
+          rawText = texts;
+          break;
+        }
+      }
+    }
+  }
+
+  // دعم احتياطي في حال أرجع الخادم بنية candidates
+  if (!rawText && Array.isArray(data.candidates)) {
+    rawText = data.candidates?.[0]?.content?.parts?.map((p) => p.text || '').join('\n')?.trim() || '';
+  }
+
+  return parseOpenAiResponsesOutput({ output_text: rawText });
+}
+
+/**
  * استخراج وفهم الرد (Response Parsing) من استجابة OpenAI Responses API
  */
 function parseOpenAiResponsesOutput(apiResponseData) {
@@ -142332,7 +142443,6 @@ function parseOpenAiResponsesOutput(apiResponseData) {
         }
       }
     }
-    // احتياط في حال كان النص في أي عنصر داخل output
     if (!rawJsonText) {
       for (const item of apiResponseData.output) {
         if (Array.isArray(item?.content)) {
@@ -142352,7 +142462,6 @@ function parseOpenAiResponsesOutput(apiResponseData) {
     return { results: [], message: 'لم يتم العثور على نص مخرجات في رد النموذج.' };
   }
 
-  // تنظيف أي علامات markdown ```json إن وجدت وتحويلها إلى كائن برمجي
   const cleaned = rawJsonText
     .replace(/^```json\s*/i, '')
     .replace(/^```\s*/i, '')
@@ -142366,7 +142475,6 @@ function parseOpenAiResponsesOutput(apiResponseData) {
       message: typeof parsed.message === 'string' ? parsed.message : ''
     };
   } catch {
-    // محاولة استخراج أول كائن JSON من النص
     const match = cleaned.match(/\{[\s\S]*\}/);
     if (match) {
       try {
@@ -142442,7 +142550,8 @@ function estimateTokens(text) {
 }
 
 /**
- * استدعاء البحث الدلالي السحابي عبر OpenAI Responses API (/v1/responses) أو المزود البديل للتجربة
+ * استدعاء البحث الدلالي السحابي عبر OpenAI Responses API (/v1/responses)
+ * أو Google Gemini Interactions API (/v1beta/interactions) أو المزود البديل للتجربة
  */
 async function executeCloudSemanticSearch({
   provider = 'openai',
@@ -142504,7 +142613,7 @@ async function executeCloudSemanticSearch({
     };
   }
 
-  // المسار ٢: دعم التبديل لمزودات أخرى للتجربة والمقارنة مع إرجاع نفس هيكل الـ JSON
+  // تحضير مقتطفات المعجم للمزودات الأخرى
   const localCands = retrieveLocalCandidates(allDictionaries, userQuery, scopeFilter, maxNumResults);
   const contextLines = localCands
     .map(
@@ -142515,30 +142624,55 @@ async function executeCloudSemanticSearch({
 
   const promptForOtherProvider = `سؤال المستخدم: "${userQuery}"\n\nمقتطفات المعجم:\n${contextLines}\n\nأرجع JSON فقط مطابقاً للمخطط: {"results": [{"id":"","term":"","dictionaryId":"","page":1,"short_meaning":"","source":""}], "message": ""}`;
 
+  // المسار ٢: Google Gemini Interactions API الرسمية (https://generativelanguage.googleapis.com/v1beta/interactions)
+  if (provider === 'gemini') {
+    const interactionBody = buildGeminiInteractionsRequestBody({
+      model,
+      systemInstruction: systemPrompt || DEFAULT_SYSTEM_PROMPT,
+      inputPrompt: promptForOtherProvider
+    });
+
+    const response = await fetch('https://generativelanguage.googleapis.com/v1beta/interactions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-goog-api-key': apiKey.trim()
+      },
+      body: JSON.stringify(interactionBody)
+    });
+
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data?.error?.message || `خطأ من Gemini Interactions API (${response.status})`);
+    }
+
+    const parsed = parseGeminiInteractionsOutput(data);
+    const usage = data?.usage || {};
+    const inputTokens = usage.total_input_tokens || usage.input_tokens || 0;
+    const outputTokens = usage.total_output_tokens || usage.output_tokens || 0;
+    const totalTokens =
+      usage.total_tokens ||
+      inputTokens + outputTokens ||
+      estimateTokens(promptForOtherProvider + JSON.stringify(parsed));
+    const elapsedSeconds = Number(((performance.now() - startTime) / 1000).toFixed(2));
+
+    return {
+      results: parsed.results,
+      message: parsed.message,
+      inputTokens,
+      outputTokens,
+      totalTokens,
+      responseTimeSec: elapsedSeconds
+    };
+  }
+
+  // المسار ٣: Claude أو DeepSeek
   let rawText = '';
   let inputTokens = 0;
   let outputTokens = 0;
   let totalTokens = 0;
 
-  if (provider === 'gemini') {
-    const cleanModel = (model || 'gemini-2.5-flash').replace(/^models\//, '').trim();
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(cleanModel)}:generateContent?key=${encodeURIComponent(apiKey.trim())}`;
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        systemInstruction: { parts: [{ text: systemPrompt || DEFAULT_SYSTEM_PROMPT }] },
-        contents: [{ role: 'user', parts: [{ text: promptForOtherProvider }] }],
-        generationConfig: { temperature: 0.1, responseMimeType: 'application/json' }
-      })
-    });
-    const data = await response.json();
-    if (!response.ok) throw new Error(data?.error?.message || 'خطأ من Gemini API');
-    rawText = data?.candidates?.[0]?.content?.parts?.map((p) => p.text || '').join('\n') || '{}';
-    inputTokens = data?.usageMetadata?.promptTokenCount || 0;
-    outputTokens = data?.usageMetadata?.candidatesTokenCount || 0;
-    totalTokens = data?.usageMetadata?.totalTokenCount || estimateTokens(promptForOtherProvider + rawText);
-  } else if (provider === 'claude') {
+  if (provider === 'claude') {
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
@@ -142779,7 +142913,7 @@ function computeBenchmarkStats(logs) {
       provider: 'openai',
       modelsByProvider: {
         openai: 'gpt-4o-mini',
-        gemini: 'gemini-2.5-flash',
+        gemini: 'gemini-3.8-flash',
         deepseek: 'deepseek-chat',
         claude: 'claude-3-7-sonnet-latest'
       },
@@ -142800,10 +142934,12 @@ function computeBenchmarkStats(logs) {
         const saved = localStorage.getItem(STORAGE_KEYS.AI_CONFIG);
         if (!saved) return JSON.parse(JSON.stringify(DEFAULT_AI_CONFIG));
         const parsed = JSON.parse(saved);
+        const mergedModels = { ...DEFAULT_AI_CONFIG.modelsByProvider, ...(parsed.modelsByProvider || {}) };
+        mergedModels.gemini = normalizeGeminiModelName(mergedModels.gemini);
         return {
           ...DEFAULT_AI_CONFIG,
           ...parsed,
-          modelsByProvider: { ...DEFAULT_AI_CONFIG.modelsByProvider, ...(parsed.modelsByProvider || {}) },
+          modelsByProvider: mergedModels,
           apiKeysByProvider: { ...DEFAULT_AI_CONFIG.apiKeysByProvider, ...(parsed.apiKeysByProvider || {}) }
         };
       } catch {

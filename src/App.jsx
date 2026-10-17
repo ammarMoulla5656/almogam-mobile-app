@@ -34,6 +34,7 @@ import {
   DEFAULT_SYSTEM_PROMPT,
   AI_PROVIDERS,
   getDictionaryLabel,
+  normalizeGeminiModelName,
   executeCloudSemanticSearch,
   findFullEntryInDictionaries,
   convertLogsToCsv,
@@ -90,7 +91,7 @@ const DEFAULT_AI_CONFIG = {
   provider: 'openai',
   modelsByProvider: {
     openai: 'gpt-4o-mini',
-    gemini: 'gemini-2.5-flash',
+    gemini: 'gemini-3.8-flash',
     deepseek: 'deepseek-chat',
     claude: 'claude-3-7-sonnet-latest'
   },
@@ -163,10 +164,15 @@ export default function App() {
       const saved = localStorage.getItem(STORAGE_KEYS.AI_CONFIG);
       if (!saved) return DEFAULT_AI_CONFIG;
       const parsed = JSON.parse(saved);
+      const mergedModels = {
+        ...DEFAULT_AI_CONFIG.modelsByProvider,
+        ...(parsed.modelsByProvider || {})
+      };
+      mergedModels.gemini = normalizeGeminiModelName(mergedModels.gemini);
       return {
         ...DEFAULT_AI_CONFIG,
         ...parsed,
-        modelsByProvider: { ...DEFAULT_AI_CONFIG.modelsByProvider, ...(parsed.modelsByProvider || {}) },
+        modelsByProvider: mergedModels,
         apiKeysByProvider: { ...DEFAULT_AI_CONFIG.apiKeysByProvider, ...(parsed.apiKeysByProvider || {}) }
       };
     } catch {
