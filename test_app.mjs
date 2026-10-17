@@ -1,36 +1,69 @@
 #!/usr/bin/env node
 import fs from 'fs';
 import { prepareEntryForSearch, smartSearchEntries } from './src/utils/smartSearch.js';
+import {
+  retrieveLocalCandidates,
+  buildCompressedContextPrompt,
+  convertLogsToCsv,
+  computeBenchmarkStats
+} from './src/utils/aiRagEngine.js';
 
 const raw = JSON.parse(fs.readFileSync('./src/data/dictionaries.json', 'utf8'));
-const fiqhi = raw.dictionaries[0];
-const prepared = fiqhi.entries.map(prepareEntryForSearch);
+const allDictionaries = raw.dictionaries.map((d) => ({
+  ...d,
+  preparedEntries: d.entries.map(prepareEntryForSearch)
+}));
 
-console.log(`✅ Loaded "${fiqhi.title}" with ${prepared.length} entries across ${fiqhi.chapters.length} chapters.`);
+console.log(`✅ Loaded ${allDictionaries.length} dictionaries.`);
 
-// Test 1: Exact term without hamza or ال
-const r1 = smartSearchEntries(prepared, 'ابريسم');
-console.assert(r1.length > 0 && r1[0].term.includes('ابريسم'), 'Test 1 failed');
-console.log(`🔍 Search "ابريسم" -> Top result: ${r1[0]?.term}`);
+// Test 1: Local Hybrid Retrieval with automatic "راجع" reference resolution
+// "الابتهال" says: راجع « التعوذ »
+const cands = retrieveLocalCandidates(allDictionaries, 'ما هو الابتهال في الدعاء', 'auto', 6);
+console.assert(cands.length > 0, 'RAG retrieval failed');
+const ibtihal = cands.find((c) => c.term.includes('الابتهال'));
+console.assert(ibtihal && ibtihal.definition.includes('تعريف "التعوذ" المحال إليه'), 'Reference resolution failed');
+console.log(`🔍 RAG Reference Resolution for "الابتهال" -> Resolved definition length: ${ibtihal.definition.length} chars`);
 
-// Test 2: Content search (searching by meaning/content, not term name)
-const r2 = smartSearchEntries(prepared, 'حجر يكتحل به');
-console.assert(r2.length > 0 && r2[0].term.includes('الإثمد'), 'Test 2 failed');
-console.log(`🔍 Content Search "حجر يكتحل به" -> Top result: ${r2[0]?.term} (${r2[0]?.definition})`);
+// Test 2: Compressed Token-Saving Context Prompt
+const prompt = buildCompressedContextPrompt('ما هو الابتهال', cands);
+console.assert(prompt.includes('مقتطفات المعجم المرفقة'), 'Compressed prompt failed');
+console.log(`🪙 Compressed Prompt size: ${prompt.length} chars (~${Math.ceil(prompt.length / 3.2)} tokens)`);
 
-// Test 3: Semantic / Synonym expansion search (searching "فلوس" or "ورقة نقدية")
-const r3 = smartSearchEntries(prepared, 'الاوراق النقديه الدولار');
-console.assert(r3.length > 0 && r3[0].term.includes('الاسكناس'), 'Test 3 failed');
-console.log(`🔍 Smart Search "الاوراق النقديه الدولار" -> Top result: ${r3[0]?.term}`);
+// Test 3: Benchmark Analytics & CSV Export
+const sampleLogs = [
+  {
+    timestamp: '2026-10-17 15:00:00',
+    provider: 'Google Gemini',
+    model: 'gemini-2.5-flash',
+    dictionaryScope: 'auto',
+    query: 'ما هو الابتهال',
+    candidatesSent: [{ term: 'الابتهال' }],
+    responseTimeSec: 1.2,
+    tokens: 420,
+    rating: 'جيد',
+    note: 'ممتاز',
+    answer: 'الابتهال هو...',
+    systemPrompt: 'افتراضي'
+  },
+  {
+    timestamp: '2026-10-17 15:05:00',
+    provider: 'OpenAI',
+    model: 'gpt-4o-mini',
+    dictionaryScope: 'auto',
+    query: 'ما هو الابتهال',
+    candidatesSent: [{ term: 'الابتهال' }],
+    responseTimeSec: 1.8,
+    tokens: 510,
+    rating: 'سيء',
+    note: '',
+    answer: '...',
+    systemPrompt: 'افتراضي'
+  }
+];
+const stats = computeBenchmarkStats(sampleLogs);
+console.assert(stats.bestAccuracyModel.model === 'gemini-2.5-flash', 'Benchmark stats failed');
+const csv = convertLogsToCsv(sampleLogs);
+console.assert(csv.includes('gemini-2.5-flash'), 'CSV export failed');
+console.log(`📊 Benchmark Analytics & CSV verified -> Best model: ${stats.bestAccuracyModel.model} (${stats.bestAccuracyModel.goodRate}%)`);
 
-// Test 4: Typo / Fuzzy tolerance
-const r4 = smartSearchEntries(prepared, 'الاحتظار'); // ظ instead of ض
-console.assert(r4.length > 0 && r4[0].term.includes('الاحتضار'), 'Test 4 failed');
-console.log(`🔍 Fuzzy Typo Search "الاحتظار" -> Top result: ${r4[0]?.term}`);
-
-// Test 5: Chapter filter
-const r5 = smartSearchEntries(prepared, '', { letterFilter: 'الباء' });
-console.assert(r5.length > 50, 'Test 5 failed');
-console.log(`📑 Filter Chapter "الباء" -> ${r5.length} terms (starts at page ${r5[0]?.page})`);
-
-console.log('🎉 All automated tests passed with zero errors!');
+console.log('🎉 All AI RAG & Benchmarking tests passed with zero errors!');

@@ -5,7 +5,6 @@ import {
   Sun,
   Moon,
   Copy,
-  Share2,
   ChevronDown,
   Bookmark,
   Check,
@@ -14,15 +13,35 @@ import {
   Home,
   ArrowUpRight,
   ListFilter,
-  Type
+  Type,
+  Sparkles,
+  ThumbsUp,
+  ThumbsDown,
+  BarChart3,
+  Download,
+  Upload,
+  Plus,
+  RotateCcw,
+  KeyRound,
+  Cpu
 } from 'lucide-react';
 import initialData from './data/dictionaries.json';
 import { prepareEntryForSearch, smartSearchEntries } from './utils/smartSearch.js';
+import {
+  DEFAULT_SYSTEM_PROMPT,
+  AI_PROVIDERS,
+  retrieveLocalCandidates,
+  callAiProvider,
+  convertLogsToCsv,
+  computeBenchmarkStats
+} from './utils/aiRagEngine.js';
 
 const STORAGE_KEYS = {
   THEME: 'almogam_theme_v1',
   BOOKMARKS: 'almogam_bookmarks_v1',
-  FONT_SIZE: 'almogam_font_size_v1'
+  FONT_SIZE: 'almogam_font_size_v1',
+  AI_CONFIG: 'almogam_ai_config_v1',
+  AI_LOGS: 'ai_benchmark_logs'
 };
 
 const ARABIC_CHAPTERS = [
@@ -57,23 +76,31 @@ const ARABIC_CHAPTERS = [
   { letter: 'الياء', short: 'ي' }
 ];
 
-// مقاسات الخط المباشرة (بالبيكسل) لضمان تغير حجم الخط فعلياً في كل البطاقات والشروحات
 const FONT_STYLES = {
-  sm: {
-    termSize: '18px',
-    defSize: '16px',
-    lineHeight: '1.75'
+  sm: { termSize: '18px', defSize: '16px', lineHeight: '1.75' },
+  md: { termSize: '22px', defSize: '20px', lineHeight: '1.9' },
+  lg: { termSize: '26px', defSize: '24px', lineHeight: '2.05' }
+};
+
+const DEFAULT_AI_CONFIG = {
+  provider: 'gemini',
+  modelsByProvider: {
+    gemini: 'gemini-2.5-flash',
+    openai: 'gpt-4o-mini',
+    deepseek: 'deepseek-chat',
+    claude: 'claude-3-7-sonnet-latest',
+    custom: 'gpt-4o-mini'
   },
-  md: {
-    termSize: '22px',
-    defSize: '20px',
-    lineHeight: '1.9'
+  apiKeysByProvider: {
+    gemini: '',
+    openai: '',
+    deepseek: '',
+    claude: '',
+    custom: ''
   },
-  lg: {
-    termSize: '26px',
-    defSize: '24px',
-    lineHeight: '2.05'
-  }
+  customUrl: 'https://api.openai.com/v1/chat/completions',
+  systemPrompt: DEFAULT_SYSTEM_PROMPT,
+  maxCandidates: 6
 };
 
 export default function App() {
@@ -127,7 +154,238 @@ export default function App() {
     }));
   }, []);
 
-  // التبويبات: 'home' (الرئيسية) | 'dictionary' (المعجم) | 'fehrest' (الفهرست) | 'bookmarks' (المحفوظات) | 'about' (الإعدادات والكتاب)
+  // إعدادات الذكاء الاصطناعي وسجل المقارنة
+  const [aiConfig, setAiConfig] = useState(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEYS.AI_CONFIG);
+      if (!saved) return DEFAULT_AI_CONFIG;
+      const parsed = JSON.parse(saved);
+      return {
+        ...DEFAULT_AI_CONFIG,
+        ...parsed,
+        modelsByProvider: { ...DEFAULT_AI_CONFIG.modelsByProvider, ...(parsed.modelsByProvider || {}) },
+        apiKeysByProvider: { ...DEFAULT_AI_CONFIG.apiKeysByProvider, ...(parsed.apiKeysByProvider || {}) }
+      };
+    } catch {
+      return DEFAULT_AI_CONFIG;
+    }
+  });
+
+  const updateAiConfig = (updater) => {
+    setAiConfig((prev) => {
+      const next = typeof updater === 'function' ? updater(prev) : { ...prev, ...updater };
+      localStorage.setItem(STORAGE_KEYS.AI_CONFIG, JSON.stringify(next));
+      return next;
+    });
+  };
+
+  const [benchmarkLogs, setBenchmarkLogs] = useState(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEYS.AI_LOGS);
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  const persistBenchmarkLogs = useCallback((logs) => {
+    setBenchmarkLogs(logs);
+    const jsonStr = JSON.stringify(logs, null, 2);
+    localStorage.setItem(STORAGE_KEYS.AI_LOGS, jsonStr);
+    const csvStr = convertLogsToCsv(logs);
+    localStorage.setItem(STORAGE_KEYS.AI_LOGS + '_csv', csvStr);
+    if (window.AndroidShare && typeof window.AndroidShare.saveBenchmarkFiles === 'function') {
+      try {
+        window.AndroidShare.saveBenchmarkFiles(jsonStr, csvStr);
+      } catch {
+        // ignore
+      }
+    }
+  }, []);
+
+  // حالة القائمة العائمة للبحث بالذكاء الاصطناعي (Floating AI Search Sheet)
+  const [aiSheetOpen, setAiSheetOpen] = useState(false);
+  const [aiScope, setAiScope] = useState('auto'); // 'auto' | 'all' | 'fiqhi_main' | 'usuli_dict' | 'lughawi_dict'
+  const [aiQuery, setAiQuery] = useState('');
+  const [aiCandidates, setAiCandidates] = useState([]);
+  const [manualTermInput, setManualTermInput] = useState('');
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiResult, setAiResult] = useState(null); // { answer, tokens, responseTimeSec, provider, model, candidatesSent, query, scope }
+  const [aiError, setAiError] = useState(null);
+  const [feedbackNote, setFeedbackNote] = useState('');
+  const [feedbackGiven, setFeedbackGiven] = useState(null); // 'good' | 'bad'
+  const [showStatsModal, setShowStatsModal] = useState(false);
+
+  // تحديث المقترحات المبدئية محلياً بشكل تلقائي فور كتابة السؤال لتوفير التوكنات
+  useEffect(() => {
+    if (!aiQuery.trim()) {
+      setAiCandidates([]);
+      return;
+    }
+    const extracted = retrieveLocalCandidates(
+      allDictionaries,
+      aiQuery,
+      aiScope,
+      aiConfig.maxCandidates
+    );
+    setAiCandidates(extracted);
+  }, [aiQuery, aiScope, aiConfig.maxCandidates, allDictionaries]);
+
+  const handleAddManualCandidate = () => {
+    if (!manualTermInput.trim()) return;
+    const found = retrieveLocalCandidates(allDictionaries, manualTermInput, 'all', 1);
+    if (found.length > 0) {
+      if (!aiCandidates.some((c) => c.id === found[0].id)) {
+        setAiCandidates((prev) => [...prev, found[0]]);
+        showToast(`تمت إضافة "${found[0].term}" للمقترحات`);
+      }
+    } else {
+      setAiCandidates((prev) => [
+        ...prev,
+        {
+          id: `custom_${Date.now()}`,
+          term: manualTermInput.trim(),
+          definition: manualTermInput.trim(),
+          letter: 'مضاف',
+          page: 1,
+          dictionaryId: 'fiqhi_main',
+          dictionaryLabel: 'مضاف يدوياً',
+          sources: []
+        }
+      ]);
+    }
+    setManualTermInput('');
+  };
+
+  const handleRunAiSearch = async () => {
+    if (!aiQuery.trim()) {
+      showToast('يرجى كتابة السؤال أو المعنى أولاً');
+      return;
+    }
+    setAiLoading(true);
+    setAiError(null);
+    setAiResult(null);
+    setFeedbackGiven(null);
+    setFeedbackNote('');
+
+    const providerId = aiConfig.provider;
+    const providerObj = AI_PROVIDERS.find((p) => p.id === providerId) || AI_PROVIDERS[0];
+    const modelName = aiConfig.modelsByProvider[providerId] || providerObj.defaultModel;
+    const apiKey = aiConfig.apiKeysByProvider[providerId] || '';
+
+    try {
+      const res = await callAiProvider({
+        provider: providerId,
+        model: modelName,
+        apiKey,
+        customUrl: aiConfig.customUrl,
+        systemPrompt: aiConfig.systemPrompt,
+        userQuery: aiQuery,
+        candidates: aiCandidates
+      });
+
+      setAiResult({
+        answer: res.answer,
+        tokens: res.tokens,
+        responseTimeSec: res.responseTimeSec,
+        provider: providerObj.name,
+        providerId,
+        model: modelName,
+        candidatesSent: aiCandidates,
+        query: aiQuery,
+        scope: aiScope
+      });
+    } catch (err) {
+      setAiError(err.message || 'حدث خطأ أثناء الاتصال بالنموذج');
+    } finally {
+      setAiLoading(false);
+    }
+  };
+
+  const handleRateAiResult = (ratingType) => {
+    if (!aiResult) return;
+    const logItem = {
+      id: `log_${Date.now()}`,
+      timestamp: new Date().toLocaleString('sv-SE'),
+      provider: aiResult.provider,
+      model: aiResult.model,
+      systemPrompt: aiConfig.systemPrompt,
+      dictionaryScope: aiResult.scope,
+      query: aiResult.query,
+      candidatesSent: aiResult.candidatesSent.map((c) => ({
+        id: c.id,
+        term: c.term,
+        page: c.page,
+        dictionaryId: c.dictionaryId
+      })),
+      answer: aiResult.answer,
+      tokens: aiResult.tokens,
+      responseTimeSec: aiResult.responseTimeSec,
+      rating: ratingType === 'good' ? 'جيد' : 'سيء',
+      note: feedbackNote.trim()
+    };
+
+    const nextLogs = [logItem, ...benchmarkLogs];
+    persistBenchmarkLogs(nextLogs);
+    setFeedbackGiven(ratingType);
+    showToast(`تم حفظ التقييم (${logItem.rating}) في ai_benchmark_logs.json`);
+  };
+
+  const handleExportBenchmarkLogs = (format = 'json') => {
+    if (benchmarkLogs.length === 0) {
+      showToast('لا توجد سجلات تقييم محفوظة بعد');
+      return;
+    }
+    const isCsv = format === 'csv';
+    const content = isCsv ? convertLogsToCsv(benchmarkLogs) : JSON.stringify(benchmarkLogs, null, 2);
+    const filename = isCsv ? 'ai_benchmark_logs.csv' : 'ai_benchmark_logs.json';
+
+    if (window.AndroidShare && typeof window.AndroidShare.share === 'function') {
+      window.AndroidShare.saveBenchmarkFiles(
+        JSON.stringify(benchmarkLogs, null, 2),
+        convertLogsToCsv(benchmarkLogs)
+      );
+      window.AndroidShare.share(filename, content);
+      return;
+    }
+
+    const blob = new Blob([content], {
+      type: isCsv ? 'text/csv;charset=utf-8' : 'application/json;charset=utf-8'
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+    showToast(`تم تصدير ${filename} بنجاح`);
+  };
+
+  const handleImportBenchmarkLogs = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const parsed = JSON.parse(ev.target.result);
+        const imported = Array.isArray(parsed) ? parsed : parsed.logs || [];
+        if (!imported.length) {
+          showToast('الملف لا يحتوي على سجلات صالحة');
+          return;
+        }
+        const merged = [...imported, ...benchmarkLogs];
+        persistBenchmarkLogs(merged);
+        setShowStatsModal(true);
+        showToast(`تم استيراد ${imported.length} تجربة بنجاح!`);
+      } catch {
+        showToast('تأكد من اختيار ملف JSON صالح');
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  };
+
+  // حالة التصفح الرئيسية
   const [activeTab, setActiveTab] = useState('home');
   const [selectedDictId, setSelectedDictId] = useState('fiqhi_main');
   const [selectedLetter, setSelectedLetter] = useState('الكل');
@@ -140,7 +398,7 @@ export default function App() {
     setToastMsg(msg);
     setTimeout(() => {
       setToastMsg((prev) => (prev === msg ? null : prev));
-    }, 2200);
+    }, 2300);
   }, []);
 
   const currentDict = useMemo(() => {
@@ -164,11 +422,8 @@ export default function App() {
   const toggleCard = useCallback((id) => {
     setExpandedIds((prev) => {
       const next = new Set(prev);
-      if (next.has(id)) {
-        next.delete(id);
-      } else {
-        next.add(id);
-      }
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
       return next;
     });
   }, []);
@@ -177,11 +432,7 @@ export default function App() {
     if (e) e.stopPropagation();
     const formatted = `📘 ${entry.term}\n\n${entry.definition}\n\n— (${currentDict.category} - تطبيق المعجم)`;
     try {
-      if (window.Capacitor?.Plugins?.Clipboard) {
-        await window.Capacitor.Plugins.Clipboard.write({ string: formatted });
-      } else {
-        await navigator.clipboard.writeText(formatted);
-      }
+      await navigator.clipboard.writeText(formatted);
       showToast(`تم نسخ "${entry.term}"`);
     } catch {
       const textarea = document.createElement('textarea');
@@ -194,47 +445,19 @@ export default function App() {
     }
   }, [currentDict, showToast]);
 
-  const handleShare = useCallback(async (entry, e) => {
-    if (e) e.stopPropagation();
-    const title = `المعجم: ${entry.term}`;
-    const formatted = `📘 ${entry.term}\n\n${entry.definition}\n\n— (${currentDict.category} - تطبيق المعجم)`;
-
-    if (window.AndroidShare && typeof window.AndroidShare.share === 'function') {
-      window.AndroidShare.share(title, formatted);
-      return;
-    }
-    if (window.Capacitor?.Plugins?.Share) {
-      try {
-        await window.Capacitor.Plugins.Share.share({
-          title,
-          text: formatted,
-          dialogTitle: title
-        });
-        return;
-      } catch {
-        return;
-      }
-    }
-    if (navigator.share) {
-      try {
-        await navigator.share({ title, text: formatted });
-        return;
-      } catch {
-        return;
-      }
-    }
-    await handleCopy(entry);
-  }, [currentDict, handleCopy]);
-
   const jumpToTerm = useCallback((refTerm, e) => {
     if (e) e.stopPropagation();
     const cleaned = refTerm.replace(/[«»"()]/g, '').trim();
     setSelectedLetter('الكل');
+    setActiveTab('dictionary');
     setSearchQuery(cleaned);
-    showToast(`البحث عن: ${cleaned}`);
+    setAiSheetOpen(false);
+    showToast(`عرض: ${cleaned}`);
   }, [showToast]);
 
-  // دالة عرض البوكسات المشتركة بين البحث في الواجهة الرئيسية وشاشة المعجم
+  const stats = useMemo(() => computeBenchmarkStats(benchmarkLogs), [benchmarkLogs]);
+  const activeProviderObj = AI_PROVIDERS.find((p) => p.id === aiConfig.provider) || AI_PROVIDERS[0];
+
   const renderEntryCards = (entriesList) => {
     if (entriesList.length === 0) {
       return (
@@ -375,7 +598,7 @@ export default function App() {
         </div>
       )}
 
-      {/* الهيدر في شاشة المعجم والمحفوظات (بدون شريط الحروف العلوي الملغى) */}
+      {/* الهيدر في شاشة المعجم والمحفوظات */}
       {(activeTab === 'dictionary' || activeTab === 'bookmarks') && (
         <header className="sticky top-0 z-30 bg-gradient-to-l from-teal-800 via-teal-700 to-emerald-800 dark:from-slate-900 dark:via-slate-900 dark:to-teal-950 text-white shadow-lg">
           <div className="max-w-lg mx-auto px-3.5 pt-3.5 pb-3.5 space-y-3">
@@ -436,8 +659,8 @@ export default function App() {
       )}
 
       {/* المحتوى الرئيسي */}
-      <main className="flex-1 max-w-lg w-full mx-auto px-3.5 pt-4 pb-28">
-        {/* ١. الواجهة الرئيسية: عرض المعاجم الثلاثة بشكل نظيف ومبسط بدون شريط بحث */}
+      <main className="flex-1 max-w-lg w-full mx-auto px-3.5 pt-4 pb-36">
+        {/* ١. الواجهة الرئيسية */}
         {activeTab === 'home' && (
           <div className="space-y-4">
             <div className="rounded-3xl bg-gradient-to-br from-teal-800 via-teal-700 to-emerald-800 dark:from-slate-900 dark:to-teal-950 text-white p-6 shadow-xl border border-teal-600/30 text-center space-y-1.5">
@@ -481,7 +704,7 @@ export default function App() {
         {/* ٢. شاشة المعجم والمحفوظات */}
         {(activeTab === 'dictionary' || activeTab === 'bookmarks') && renderEntryCards(filteredEntries)}
 
-        {/* ٣. خانة الفهرست الجديدة لترتيب الأحرف الأبجدية بشكل كبير وواضح */}
+        {/* ٣. خانة الفهرست */}
         {activeTab === 'fehrest' && (
           <div className="bg-white dark:bg-slate-900 rounded-3xl p-5 border border-slate-200 dark:border-slate-800 shadow-sm space-y-4">
             <div className="text-center border-b border-slate-100 dark:border-slate-800 pb-3">
@@ -520,10 +743,10 @@ export default function App() {
           </div>
         )}
 
-        {/* ٤. شاشة الإعدادات وتفاصيل الكتاب الحقيقية من نص الكتاب الأصلي */}
+        {/* ٤. شاشة الإعدادات (تضم: المظهر والخط + إعدادات الذكاء الاصطناعي والمقارنة + بطاقة الكتاب والمؤلف) */}
         {activeTab === 'about' && (
           <div className="space-y-4">
-            {/* التحكم بالثيم وحجم الخط الفعلي */}
+            {/* أ. إعدادات المظهر والخط */}
             <div className="bg-white dark:bg-slate-900 rounded-3xl p-6 border border-slate-200 dark:border-slate-800 shadow-sm space-y-5">
               <h3 className="text-xl font-extrabold text-slate-900 dark:text-white">
                 إعدادات المظهر والخط
@@ -582,17 +805,217 @@ export default function App() {
                     </button>
                   ))}
                 </div>
-                {/* معاينة حية لحجم الخط المختار */}
-                <div
-                  style={{ fontSize: currentFont.defSize, lineHeight: currentFont.lineHeight }}
-                  className="mt-3 p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 font-serif text-center"
-                >
-                  نموذج معاينة حجم الخط المختار للقراءة
-                </div>
               </div>
             </div>
 
-            {/* بيانات الكتاب ومؤلفه الحقيقية كما وردت في صفحات الكتاب (ص ١ - ٨) */}
+            {/* ب. قسم إعدادات الذكاء الاصطناعي (AI Settings) والمقارنة */}
+            <div className="bg-white dark:bg-slate-900 rounded-3xl p-6 border-2 border-teal-500/40 dark:border-teal-500/30 shadow-md space-y-4">
+              <div className="flex items-center gap-2.5 border-b border-slate-100 dark:border-slate-800 pb-3">
+                <Sparkles className="w-6 h-6 text-teal-600 dark:text-teal-400" />
+                <h3 className="text-xl font-extrabold text-slate-900 dark:text-white">
+                  إعدادات الذكاء الاصطناعي (AI Settings)
+                </h3>
+              </div>
+
+              {/* 1. اختيار المزود (Provider) */}
+              <div>
+                <label className="block text-sm font-extrabold text-slate-700 dark:text-slate-300 mb-1.5">
+                  المزود (Provider):
+                </label>
+                <select
+                  value={aiConfig.provider}
+                  onChange={(e) => updateAiConfig({ provider: e.target.value })}
+                  className="w-full px-4 py-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 font-bold text-base focus:outline-none focus:ring-2 focus:ring-teal-500"
+                >
+                  {AI_PROVIDERS.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* رابط مخصص في حال اختيار Custom URL */}
+              {aiConfig.provider === 'custom' && (
+                <div>
+                  <label className="block text-sm font-extrabold text-slate-700 dark:text-slate-300 mb-1.5">
+                    رابط الـ API المخصص (OpenAI-Compatible Endpoint):
+                  </label>
+                  <input
+                    type="text"
+                    dir="ltr"
+                    value={aiConfig.customUrl}
+                    onChange={(e) => updateAiConfig({ customUrl: e.target.value })}
+                    placeholder="https://api.example.com/v1/chat/completions"
+                    className="w-full px-4 py-3 rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-sm font-mono"
+                  />
+                </div>
+              )}
+
+              {/* 2. اسم النموذج يدوياً أو من مقترحات */}
+              <div>
+                <label className="block text-sm font-extrabold text-slate-700 dark:text-slate-300 mb-1.5 flex items-center gap-1.5">
+                  <Cpu className="w-4 h-4 text-teal-600" />
+                  <span>اسم النموذج (Model Name):</span>
+                </label>
+                <input
+                  type="text"
+                  dir="ltr"
+                  value={aiConfig.modelsByProvider[aiConfig.provider] || ''}
+                  onChange={(e) =>
+                    updateAiConfig((prev) => ({
+                      ...prev,
+                      modelsByProvider: {
+                        ...prev.modelsByProvider,
+                        [prev.provider]: e.target.value
+                      }
+                    }))
+                  }
+                  placeholder={activeProviderObj.defaultModel}
+                  className="w-full px-4 py-3 rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 font-mono text-sm font-bold focus:outline-none focus:ring-2 focus:ring-teal-500"
+                />
+                <div className="flex flex-wrap gap-1.5 mt-2" dir="ltr">
+                  {activeProviderObj.suggestedModels.map((m) => (
+                    <button
+                      key={m}
+                      type="button"
+                      onClick={() =>
+                        updateAiConfig((prev) => ({
+                          ...prev,
+                          modelsByProvider: { ...prev.modelsByProvider, [prev.provider]: m }
+                        }))
+                      }
+                      className={`px-2.5 py-1 rounded-xl text-xs font-mono font-bold border transition ${
+                        aiConfig.modelsByProvider[aiConfig.provider] === m
+                          ? 'bg-teal-600 text-white border-teal-600'
+                          : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-300 dark:border-slate-700'
+                      }`}
+                    >
+                      {m}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* 3. مفتاح الـ API المحفوظ لكل مزود على حدة */}
+              <div>
+                <label className="block text-sm font-extrabold text-slate-700 dark:text-slate-300 mb-1.5 flex items-center gap-1.5">
+                  <KeyRound className="w-4 h-4 text-amber-500" />
+                  <span>مفتاح الـ API لـ ({activeProviderObj.name}) - يُحفظ تلقائياً:</span>
+                </label>
+                <input
+                  type="password"
+                  dir="ltr"
+                  value={aiConfig.apiKeysByProvider[aiConfig.provider] || ''}
+                  onChange={(e) =>
+                    updateAiConfig((prev) => ({
+                      ...prev,
+                      apiKeysByProvider: {
+                        ...prev.apiKeysByProvider,
+                        [prev.provider]: e.target.value
+                      }
+                    }))
+                  }
+                  placeholder="أدخل مفتاح الـ API هنا..."
+                  className="w-full px-4 py-3 rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
+                />
+              </div>
+
+              {/* 4. عدد المقترحات المرسلة للنموذج لتوفير التوكنات */}
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="text-sm font-extrabold text-slate-700 dark:text-slate-300">
+                    عدد مقترحات المعجم المرسلة في كل بحث:
+                  </label>
+                  <span className="px-3 py-1 rounded-xl bg-teal-100 dark:bg-teal-950 text-teal-800 dark:text-teal-300 font-extrabold text-sm">
+                    {aiConfig.maxCandidates} كلمات
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min="3"
+                  max="10"
+                  value={aiConfig.maxCandidates}
+                  onChange={(e) => updateAiConfig({ maxCandidates: Number(e.target.value) })}
+                  className="w-full accent-teal-600 h-2 bg-slate-200 rounded-lg cursor-pointer"
+                />
+                <div className="flex justify-between text-xs text-slate-400 mt-1">
+                  <span>3 (أعلى توفير للتوكنات)</span>
+                  <span>6 (الافتراضي المتوازن)</span>
+                  <span>10 (تغطية أوسع)</span>
+                </div>
+              </div>
+
+              {/* 5. الرسالة التوجيهية (System Prompt) */}
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="text-sm font-extrabold text-slate-700 dark:text-slate-300">
+                    الرسالة التوجيهية (System Prompt):
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      updateAiConfig({ systemPrompt: DEFAULT_SYSTEM_PROMPT });
+                      showToast('تمت استعادة الرسالة الافتراضية');
+                    }}
+                    className="flex items-center gap-1 text-xs font-extrabold text-teal-700 dark:text-teal-400 bg-teal-50 dark:bg-slate-800 px-2.5 py-1.5 rounded-xl border border-teal-200 dark:border-slate-700"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5" />
+                    <span>استعادة الرسالة الافتراضية</span>
+                  </button>
+                </div>
+                <textarea
+                  rows="6"
+                  value={aiConfig.systemPrompt}
+                  onChange={(e) => updateAiConfig({ systemPrompt: e.target.value })}
+                  className="w-full p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-sm leading-relaxed focus:outline-none focus:ring-2 focus:ring-teal-500"
+                />
+              </div>
+
+              {/* 6. الأزرار الثلاثة الخاصة بملف التقييم والمقارنة */}
+              <div className="pt-3 border-t border-slate-100 dark:border-slate-800 space-y-2.5">
+                <div className="text-sm font-extrabold text-slate-800 dark:text-slate-200">
+                  سجل التجارب ومقارنة النماذج ({benchmarkLogs.length} تجربة مسجلة):
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setShowStatsModal(true)}
+                  className="w-full py-3.5 px-4 rounded-2xl bg-teal-600 hover:bg-teal-700 text-white font-extrabold text-sm flex items-center justify-center gap-2 shadow-md transition"
+                >
+                  <BarChart3 className="w-5 h-5" />
+                  <span>١. إحصائيات ومقارنة النماذج</span>
+                </button>
+
+                <div className="grid grid-cols-2 gap-2.5">
+                  <button
+                    type="button"
+                    onClick={() => handleExportBenchmarkLogs('json')}
+                    className="py-3 px-3 rounded-2xl bg-slate-800 dark:bg-slate-700 text-white font-extrabold text-xs flex items-center justify-center gap-1.5 shadow-sm"
+                  >
+                    <Download className="w-4 h-4" />
+                    <span>٢. تصدير JSON</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => handleExportBenchmarkLogs('csv')}
+                    className="py-3 px-3 rounded-2xl bg-emerald-700 text-white font-extrabold text-xs flex items-center justify-center gap-1.5 shadow-sm"
+                  >
+                    <Download className="w-4 h-4" />
+                    <span>تصدير CSV</span>
+                  </button>
+                </div>
+
+                <label className="w-full py-3 px-4 rounded-2xl bg-amber-500/15 dark:bg-amber-500/10 text-amber-800 dark:text-amber-300 border border-amber-400/40 font-extrabold text-xs flex items-center justify-center gap-2 cursor-pointer">
+                  <Upload className="w-4 h-4" />
+                  <span>٣. استيراد ملف تجارب (Import JSON)</span>
+                  <input type="file" accept=".json" onChange={handleImportBenchmarkLogs} className="hidden" />
+                </label>
+              </div>
+            </div>
+
+            {/* ج. بطاقة الكتاب والمؤلف الحقيقية */}
             <div className="bg-white dark:bg-slate-900 rounded-3xl p-6 border border-slate-200 dark:border-slate-800 shadow-sm space-y-4">
               <h2 className="text-xl font-extrabold text-slate-900 dark:text-white border-b border-slate-100 dark:border-slate-800 pb-3">
                 بطاقة الكتاب والمؤلف
@@ -627,6 +1050,311 @@ export default function App() {
           </div>
         )}
       </main>
+
+      {/* الزر العائم للبحث الذكي بالذكاء الاصطناعي (Floating Action Button - FAB) */}
+      <button
+        onClick={() => setAiSheetOpen(true)}
+        className="fixed bottom-28 left-4 z-40 flex items-center gap-2 px-5 py-4 rounded-full bg-gradient-to-r from-teal-600 to-emerald-600 text-white font-extrabold text-sm shadow-2xl border-2 border-white/30 active:scale-95 transition"
+      >
+        <Sparkles className="w-5 h-5 text-amber-300" />
+        <span>البحث الذكي AI</span>
+      </button>
+
+      {/* القائمة العائمة للبحث الذكي بالذكاء الاصطناعي (Floating AI Search Sheet) */}
+      {aiSheetOpen && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
+          <div className="bg-white dark:bg-slate-900 w-full max-w-lg max-h-[90vh] rounded-t-3xl sm:rounded-3xl shadow-2xl border border-slate-200 dark:border-slate-800 flex flex-col overflow-hidden">
+            {/* هيدر النافذة العائمة */}
+            <div className="p-4 bg-gradient-to-l from-teal-800 to-emerald-800 text-white flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Sparkles className="w-5 h-5 text-amber-300" />
+                <div>
+                  <h3 className="text-base font-extrabold">البحث الذكي بالذكاء الاصطناعي (RAG)</h3>
+                  <p className="text-[11px] text-teal-100">
+                    {activeProviderObj.name} • {aiConfig.modelsByProvider[aiConfig.provider]}
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setAiSheetOpen(false)}
+                className="p-2 rounded-full bg-white/15 hover:bg-white/25 text-white"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* محتوى النافذة العائمة القابل للتمرير */}
+            <div className="p-4 overflow-y-auto space-y-4 flex-1 select-text">
+              {/* أ) شريط فلاتر علوي سريع (Chips) لتحديد نطاق البحث */}
+              <div>
+                <div className="text-xs font-extrabold text-slate-500 dark:text-slate-400 mb-2">
+                  نطاق البحث في المعاجم:
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {[
+                    { id: 'auto', label: '✨ تحديد تلقائي ذكي' },
+                    { id: 'all', label: 'الكل' },
+                    { id: 'fiqhi_main', label: 'المعجم الفقهي' },
+                    { id: 'usuli_dict', label: 'المعجم الأصولي' },
+                    { id: 'lughawi_dict', label: 'المعجم اللغوي' }
+                  ].map((chip) => (
+                    <button
+                      key={chip.id}
+                      onClick={() => setAiScope(chip.id)}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-extrabold transition ${
+                        aiScope === chip.id
+                          ? 'bg-teal-600 text-white shadow-sm'
+                          : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300'
+                      }`}
+                    >
+                      {chip.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* ب) حقل إدخال السؤال أو المعنى المراد البحث عنه */}
+              <div className="space-y-2">
+                <textarea
+                  rows="2"
+                  value={aiQuery}
+                  onChange={(e) => setAiQuery(e.target.value)}
+                  placeholder="اكتب سؤالك أو المعنى بالعامية أو الفصحى (مثال: ما هو الإثمد؟ أو حكم الشك بعد الفراغ)..."
+                  className="w-full p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-base font-bold focus:outline-none focus:ring-2 focus:ring-teal-500"
+                />
+
+                {/* ج) المقترحات المستخرجة محلياً (Local Hybrid Retrieval) مع فك إحالات "راجع" لتوفير التوكنات */}
+                <div className="p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-800 space-y-2">
+                  <div className="flex items-center justify-between text-xs font-extrabold text-slate-600 dark:text-slate-300">
+                    <span>
+                      المقترحات المبدئية المرسلة للنموذج ({aiCandidates.length} كلمات - موفرة للتوكنات):
+                    </span>
+                  </div>
+
+                  {aiCandidates.length === 0 ? (
+                    <p className="text-xs text-slate-400">
+                      اكتب سؤالك بالأعلى لاستخراج أقرب المصطلحات محلياً قبل إرسالها للنموذج...
+                    </p>
+                  ) : (
+                    <div className="flex flex-wrap gap-1.5">
+                      {aiCandidates.map((cand) => (
+                        <span
+                          key={cand.id}
+                          className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl bg-white dark:bg-slate-900 border border-teal-500/40 text-xs font-extrabold text-teal-800 dark:text-teal-300"
+                        >
+                          <span>{cand.term}</span>
+                          <button
+                            onClick={() =>
+                              setAiCandidates((prev) => prev.filter((item) => item.id !== cand.id))
+                            }
+                            className="text-rose-500 hover:text-rose-700 font-bold"
+                            title="حذف من المقترحات"
+                          >
+                            ✕
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* إضافة كلمة يدوياً إلى المقترحات قبل الإرسال */}
+                  <div className="flex items-center gap-2 pt-1">
+                    <input
+                      type="text"
+                      value={manualTermInput}
+                      onChange={(e) => setManualTermInput(e.target.value)}
+                      placeholder="إضافة مصطلح آخر للمقترحات..."
+                      className="flex-1 px-3 py-1.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs font-bold"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleAddManualCandidate}
+                      className="px-3 py-1.5 rounded-xl bg-teal-600 text-white text-xs font-extrabold flex items-center gap-1"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>إضافة</span>
+                    </button>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  disabled={aiLoading}
+                  onClick={handleRunAiSearch}
+                  className="w-full py-3.5 rounded-2xl bg-teal-600 hover:bg-teal-700 disabled:opacity-50 text-white font-extrabold text-base shadow-md transition flex items-center justify-center gap-2"
+                >
+                  <Sparkles className="w-5 h-5" />
+                  <span>{aiLoading ? 'جاري التحليل والإجابة...' : 'إرسال للنموذج والبحث الذكي'}</span>
+                </button>
+              </div>
+
+              {/* رسالة الخطأ إن وجدت */}
+              {aiError && (
+                <div className="p-4 rounded-2xl bg-rose-50 dark:bg-rose-950/50 border border-rose-300 dark:border-rose-800 text-rose-700 dark:text-rose-300 text-sm font-bold">
+                  ⚠️ {aiError}
+                </div>
+              )}
+
+              {/* هـ) عرض إجابة النموذج + شريط المعلومات + الكلمات المرشحة + التقييم (جيد / سيء) */}
+              {aiResult && (
+                <div className="p-4 rounded-3xl bg-teal-50/60 dark:bg-slate-800/90 border-2 border-teal-500/40 space-y-3">
+                  {/* شريط معلومات النموذج والزمن والتوكنات */}
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-xs font-extrabold pb-2 border-b border-teal-200/60 dark:border-slate-700">
+                    <span className="px-2.5 py-1 rounded-lg bg-teal-600 text-white">
+                      🤖 {aiResult.model}
+                    </span>
+                    <span className="px-2.5 py-1 rounded-lg bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300">
+                      ⏱️ {aiResult.responseTimeSec} ثانية
+                    </span>
+                    <span className="px-2.5 py-1 rounded-lg bg-slate-200 dark:bg-slate-700 text-slate-800 dark:text-slate-200">
+                      🪙 ~{aiResult.tokens} توكن
+                    </span>
+                  </div>
+
+                  {/* نص إجابة النموذج */}
+                  <div
+                    style={{ fontSize: currentFont.defSize, lineHeight: currentFont.lineHeight }}
+                    className="font-serif whitespace-pre-wrap text-slate-900 dark:text-slate-100 bg-white dark:bg-slate-950 p-4 rounded-2xl border border-slate-200 dark:border-slate-800"
+                  >
+                    {aiResult.answer}
+                  </div>
+
+                  {/* أزرار الكلمات المرشحة لفتح تفاصيل الكلمة في المعجم */}
+                  {aiResult.candidatesSent?.length > 0 && (
+                    <div className="space-y-1.5">
+                      <div className="text-xs font-extrabold text-slate-600 dark:text-slate-300">
+                        اضغط على أي مصطلح لفتحه في المعجم:
+                      </div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {aiResult.candidatesSent.map((cand) => (
+                          <button
+                            key={cand.id}
+                            onClick={(e) => jumpToTerm(cand.term, e)}
+                            className="px-3 py-1.5 rounded-xl bg-teal-600/15 hover:bg-teal-600 hover:text-white text-teal-800 dark:text-teal-300 text-xs font-extrabold transition flex items-center gap-1"
+                          >
+                            <span>📘 {cand.term}</span>
+                            <ArrowUpRight className="w-3.5 h-3.5" />
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* نظام التقييم الفوري (Feedback: جيد / سيء) */}
+                  <div className="pt-3 border-t border-teal-200/60 dark:border-slate-700 space-y-2">
+                    <div className="text-xs font-extrabold text-slate-700 dark:text-slate-300">
+                      قيّم إجابة هذا النموذج لحفظها في سجل المقارنة:
+                    </div>
+                    <input
+                      type="text"
+                      value={feedbackNote}
+                      onChange={(e) => setFeedbackNote(e.target.value)}
+                      placeholder="ملاحظة اختيارية على الإجابة..."
+                      className="w-full px-3 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs font-bold"
+                    />
+                    <div className="grid grid-cols-2 gap-2.5">
+                      <button
+                        type="button"
+                        onClick={() => handleRateAiResult('good')}
+                        className={`py-2.5 rounded-xl font-extrabold text-sm flex items-center justify-center gap-1.5 border-2 transition ${
+                          feedbackGiven === 'good'
+                            ? 'bg-emerald-600 text-white border-emerald-600'
+                            : 'bg-white dark:bg-slate-900 text-emerald-700 dark:text-emerald-400 border-emerald-500/40'
+                        }`}
+                      >
+                        <ThumbsUp className="w-4 h-4" />
+                        <span>جيد 👍</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handleRateAiResult('bad')}
+                        className={`py-2.5 rounded-xl font-extrabold text-sm flex items-center justify-center gap-1.5 border-2 transition ${
+                          feedbackGiven === 'bad'
+                            ? 'bg-rose-600 text-white border-rose-600'
+                            : 'bg-white dark:bg-slate-900 text-rose-700 dark:text-rose-400 border-rose-500/40'
+                        }`}
+                      >
+                        <ThumbsDown className="w-4 h-4" />
+                        <span>سيء 👎</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* نافذة إحصائيات ومقارنة النماذج (Benchmarking Analytics Modal) */}
+      {showStatsModal && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-slate-900 w-full max-w-lg max-h-[85vh] rounded-3xl shadow-2xl border border-slate-200 dark:border-slate-800 flex flex-col overflow-hidden">
+            <div className="p-4 bg-teal-700 text-white flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <BarChart3 className="w-5 h-5 text-amber-300" />
+                <h3 className="text-base font-extrabold">إحصائيات ومقارنة النماذج ({benchmarkLogs.length} تجربة)</h3>
+              </div>
+              <button
+                onClick={() => setShowStatsModal(false)}
+                className="p-1.5 rounded-full bg-white/15 text-white"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-4 overflow-y-auto space-y-4 flex-1">
+              {stats.models.length === 0 ? (
+                <p className="text-center text-sm text-slate-500 py-8 font-bold">
+                  لم يتم تسجيل أي تقييمات بعد. جرّب البحث الذكي واضغط (جيد 👍 أو سيء 👎) لتظهر المقارنة هنا.
+                </p>
+              ) : (
+                <>
+                  {/* ملخص الأفضل */}
+                  <div className="grid grid-cols-1 gap-2">
+                    {stats.bestAccuracyModel && (
+                      <div className="p-3 rounded-2xl bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-300 dark:border-emerald-800 text-xs font-extrabold">
+                        🏆 أعلى نسبة تقييم «جيد»: <span className="text-emerald-700 dark:text-emerald-300">{stats.bestAccuracyModel.model} ({stats.bestAccuracyModel.goodRate}%)</span>
+                      </div>
+                    )}
+                    {stats.fastestModel && (
+                      <div className="p-3 rounded-2xl bg-amber-50 dark:bg-amber-950/50 border border-amber-300 dark:border-amber-800 text-xs font-extrabold">
+                        ⚡ أسرع وقت استجابة: <span className="text-amber-700 dark:text-amber-300">{stats.fastestModel.model} ({stats.fastestModel.avgTimeSec} ثانية)</span>
+                      </div>
+                    )}
+                    {stats.lowestTokensModel && (
+                      <div className="p-3 rounded-2xl bg-teal-50 dark:bg-teal-950/50 border border-teal-300 dark:border-teal-800 text-xs font-extrabold">
+                        🪙 أقل استهلاك للتوكنات: <span className="text-teal-700 dark:text-teal-300">{stats.lowestTokensModel.model} (~{stats.lowestTokensModel.avgTokens} توكن)</span>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* جدول تفاصيل كل نموذج */}
+                  <div className="space-y-2.5">
+                    {stats.models.map((m) => (
+                      <div
+                        key={m.key}
+                        className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 space-y-1.5 text-xs"
+                      >
+                        <div className="flex items-center justify-between font-extrabold text-sm">
+                          <span>{m.model}</span>
+                          <span className="text-teal-600 dark:text-teal-400">{m.goodRate}% جيد</span>
+                        </div>
+                        <div className="flex flex-wrap justify-between text-slate-600 dark:text-slate-300 font-bold">
+                          <span>التجارب: {m.totalRuns} (👍 {m.goodCount} | 👎 {m.badCount})</span>
+                          <span>السرعة: {m.avgTimeSec} ث</span>
+                          <span>التوكنات: ~{m.avgTokens}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* شريط التنقل السفلي بحجم كبير وواضح جداً للموبايل */}
       <nav className="fixed bottom-0 inset-x-0 z-40 bg-white dark:bg-slate-900 border-t-2 border-slate-200 dark:border-slate-800 shadow-2xl pb-[env(safe-area-inset-bottom)]">
