@@ -45,7 +45,7 @@ const STORAGE_KEYS = {
   THEME: 'almogam_theme_v1',
   BOOKMARKS: 'almogam_bookmarks_v1',
   FONT_SIZE: 'almogam_font_size_v1',
-  AI_CONFIG: 'almogam_ai_config_v2',
+  AI_CONFIG: 'almogam_ai_config_v3',
   AI_LOGS: 'ai_search_benchmarks'
 };
 
@@ -103,7 +103,7 @@ const DEFAULT_AI_CONFIG = {
   },
   vectorStoreId: DEFAULT_VECTOR_STORE_ID,
   extraVectorStoreIds: '',
-  maxNumResults: 2,
+  maxNumResults: 8,
   systemPrompt: DEFAULT_SYSTEM_PROMPT
 };
 
@@ -255,7 +255,7 @@ export default function App() {
         model: modelName,
         apiKey,
         vectorStoreIds: storeIds,
-        maxNumResults: Number(aiConfig.maxNumResults) || 5,
+        maxNumResults: Number(aiConfig.maxNumResults) || 8,
         systemPrompt: aiConfig.systemPrompt || DEFAULT_SYSTEM_PROMPT,
         userQuery: aiQuery.trim(),
         scopeFilter: aiScope,
@@ -434,6 +434,7 @@ export default function App() {
   const [selectedDictId, setSelectedDictId] = useState('fiqhi_main');
   const [selectedLetter, setSelectedLetter] = useState('الكل');
   const [searchQuery, setSearchQuery] = useState('');
+  const [pinnedEntryId, setPinnedEntryId] = useState(null);
   const [expandedIds, setExpandedIds] = useState(() => new Set(['fiqh_1']));
   const [visibleCount, setVisibleCount] = useState(12);
   const [toastMsg, setToastMsg] = useState(null);
@@ -455,13 +456,22 @@ export default function App() {
 
   const filteredEntries = useMemo(() => {
     if (!currentDict) return [];
-    return smartSearchEntries(currentDict.preparedEntries, searchQuery, {
+    const results = smartSearchEntries(currentDict.preparedEntries, searchQuery, {
       letterFilter: activeTab === 'home' ? 'الكل' : selectedLetter,
       searchScope: 'all',
       onlyBookmarks: activeTab === 'bookmarks',
       bookmarksSet
     });
-  }, [currentDict, searchQuery, selectedLetter, activeTab, bookmarksSet]);
+    if (pinnedEntryId && searchQuery.trim()) {
+      const pinned =
+        results.find((e) => e.id === pinnedEntryId) ||
+        currentDict.preparedEntries.find((e) => e.id === pinnedEntryId);
+      if (pinned) {
+        return [pinned, ...results.filter((e) => e.id !== pinnedEntryId)];
+      }
+    }
+    return results;
+  }, [currentDict, searchQuery, selectedLetter, activeTab, bookmarksSet, pinnedEntryId]);
 
   const toggleCard = useCallback((id) => {
     setExpandedIds((prev) => {
@@ -493,24 +503,82 @@ export default function App() {
     [currentDict, showToast]
   );
 
+  const extractCrossReference = useCallback((definition) => {
+    if (!definition) return null;
+    const match = definition.match(
+      /(راجع|يراجع|انظر)\s+(?:ما\s+(?:يأتي|سبق)\s+(?:أيضا\s+|أيضاً\s+)?في\s+)?(?:مادة|لفظ|كلمة|باب)?\s*[:：]?\s*[«"(\[]?([^»")\].،؛:\n]{2,28})[»")\]]?/
+    );
+    if (!match) return null;
+    const verb = match[1] === 'انظر' ? 'انظر' : 'راجع';
+    const rawTarget = match[2].replace(/[«»"()[\]]/g, '').trim();
+    if (!rawTarget) return null;
+    const skipBooks = [
+      'اللسان', 'التهذيب', 'الديوان', 'صحيح', 'الصبح', 'إرشاد', 'الصحاح',
+      'القاموس', 'المحكم', 'جمهرة', 'السبعة', 'تفسيره', 'الحيوان', 'ضعيف',
+      'الشرائع', 'اللمعة', 'المكاسب', 'التحرير', 'الجواهر', 'العروة',
+      'المبسوط', 'المصباح', 'الفتاوى', 'محاشي', 'المجمع'
+    ];
+    if (skipBooks.some((b) => rawTarget.includes(b)) || /\b(?:ص|ج)\s*[0-9٠-٩۱-۹]/.test(rawTarget)) {
+      return null;
+    }
+    return { verb, target: rawTarget };
+  }, []);
+
   const jumpToTerm = useCallback(
     (refTerm, dictId, entryId, e) => {
       if (e) e.stopPropagation();
-      const cleaned = refTerm.replace(/[«»"()]/g, '').trim();
-      if (dictId && allDictionaries.some((d) => d.id === dictId)) {
-        setSelectedDictId(dictId);
+      const cleaned = (refTerm || '')
+        .replace(/^[«"(\[]+|[»")\].،؛:]+$/g, '')
+        .replace(/[«»"()[\]]/g, '')
+        .trim();
+      const targetDictId =
+        dictId && allDictionaries.some((d) => d.id === dictId) ? dictId : selectedDictId;
+      const targetDict =
+        allDictionaries.find((d) => d.id === targetDictId) || currentDict || allDictionaries[0];
+
+      if (targetDictId !== selectedDictId) {
+        setSelectedDictId(targetDictId);
       }
+
+      let targetEntry = null;
+      if (entryId && targetDict) {
+        targetEntry = targetDict.preparedEntries.find((item) => item.id === entryId) || null;
+      }
+      if (!targetEntry && targetDict && cleaned) {
+        const searchMatches = smartSearchEntries(targetDict.preparedEntries, cleaned, {
+          letterFilter: 'الكل',
+          searchScope: 'all'
+        });
+        if (searchMatches.length > 0) {
+          targetEntry = searchMatches[0];
+        }
+      }
+
       setSelectedLetter('الكل');
       setActiveTab('dictionary');
       setSearchQuery(cleaned);
-      if (entryId) {
-        setExpandedIds((prev) => new Set([...prev, entryId]));
+
+      if (targetEntry) {
+        setPinnedEntryId(targetEntry.id);
+        setExpandedIds(new Set([targetEntry.id]));
+      } else if (entryId) {
+        setPinnedEntryId(entryId);
+        setExpandedIds(new Set([entryId]));
       }
+
       setSelectedFullEntryModal(null);
       setAiSheetOpen(false);
-      showToast(`عرض: ${cleaned}`);
+
+      if (typeof window !== 'undefined') {
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+        setTimeout(() => {
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+        }, 60);
+      }
+
+      showToast(targetEntry ? `عرض: ${targetEntry.term}` : `عرض: ${cleaned}`);
     },
-    [allDictionaries, showToast]
+    [allDictionaries, currentDict, selectedDictId, showToast]
   );
 
   const stats = useMemo(() => computeBenchmarkStats(benchmarkLogs), [benchmarkLogs]);
@@ -533,11 +601,12 @@ export default function App() {
         {entriesList.slice(0, visibleCount).map((entry) => {
           const isExpanded = expandedIds.has(entry.id);
           const isBookmarked = bookmarksSet.has(entry.id);
-          const refMatch = entry.definition.match(/راجع\s+(?:لفظ|كلمة)?\s*[«"(\[]?([^»")\].،]{2,25})[»")\]]?/);
+          const refInfo = extractCrossReference(entry.definition);
 
           return (
             <div
               key={entry.id}
+              id={`entry-card-${entry.id}`}
               onClick={() => toggleCard(entry.id)}
               className={`rounded-3xl transition-all duration-200 cursor-pointer border ${
                 isExpanded
@@ -558,12 +627,25 @@ export default function App() {
                   </div>
 
                   <div className="min-w-0">
-                    <h2
-                      style={{ fontSize: currentFont.termSize }}
-                      className="font-extrabold text-slate-900 dark:text-white leading-snug"
-                    >
-                      {entry.term}
-                    </h2>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h2
+                        style={{ fontSize: currentFont.termSize }}
+                        className="font-extrabold text-slate-900 dark:text-white leading-snug"
+                      >
+                        {entry.term}
+                      </h2>
+                      {!isExpanded && refInfo && (
+                        <button
+                          onClick={(e) => jumpToTerm(refInfo.target, currentDict.id, null, e)}
+                          className="text-xs font-bold px-2.5 py-1 rounded-xl bg-amber-100 hover:bg-amber-200 dark:bg-amber-950/80 text-amber-800 dark:text-amber-300 flex items-center gap-1 transition shadow-xs"
+                        >
+                          <ArrowUpRight className="w-3.5 h-3.5" />
+                          <span>
+                            {refInfo.verb}: {refInfo.target}
+                          </span>
+                        </button>
+                      )}
+                    </div>
                     {!isExpanded && (
                       <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
                         باب {entry.letter} • ص {entry.page}
@@ -611,13 +693,15 @@ export default function App() {
                       باب حرف {entry.letter} (ص {entry.page})
                     </span>
 
-                    {refMatch && (
+                    {refInfo && (
                       <button
-                        onClick={(e) => jumpToTerm(refMatch[1], currentDict.id, null, e)}
-                        className="text-xs font-bold px-3 py-1 rounded-xl bg-amber-100 dark:bg-amber-950/70 text-amber-800 dark:text-amber-300 flex items-center gap-1"
+                        onClick={(e) => jumpToTerm(refInfo.target, currentDict.id, null, e)}
+                        className="text-xs font-bold px-3 py-1.5 rounded-xl bg-amber-100 hover:bg-amber-200 active:scale-95 dark:bg-amber-950/70 text-amber-800 dark:text-amber-300 flex items-center gap-1 transition shadow-xs"
                       >
                         <ArrowUpRight className="w-3.5 h-3.5" />
-                        <span>راجع: {refMatch[1]}</span>
+                        <span>
+                          {refInfo.verb}: {refInfo.target}
+                        </span>
                       </button>
                     )}
                   </div>
@@ -687,13 +771,19 @@ export default function App() {
               <input
                 type="text"
                 value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
+                onChange={(e) => {
+                  setPinnedEntryId(null);
+                  setSearchQuery(e.target.value);
+                }}
                 placeholder={`ابحث في ${currentDict.category}...`}
                 className="w-full pr-12 pl-12 py-3.5 rounded-2xl bg-white/15 dark:bg-slate-800/95 text-white placeholder-teal-100/85 border border-white/25 focus:outline-none focus:ring-2 focus:ring-amber-400 text-base font-bold"
               />
               {searchQuery && (
                 <button
-                  onClick={() => setSearchQuery('')}
+                  onClick={() => {
+                    setPinnedEntryId(null);
+                    setSearchQuery('');
+                  }}
                   className="absolute left-3.5 p-1.5 text-teal-100 hover:text-white bg-black/20 rounded-full"
                 >
                   <X className="w-4 h-4" />
@@ -999,7 +1089,7 @@ export default function App() {
                 />
               </div>
 
-              {/* 5. حقل رقمي لتحديد الحد الأقصى لنتائج البحث السحابي (max_num_results): الافتراضي 5 */}
+              {/* 5. حقل رقمي لتحديد الحد الأقصى لنتائج البحث السحابي (max_num_results): الافتراضي 8 */}
               <div>
                 <div className="flex items-center justify-between mb-1.5">
                   <label className="text-sm font-extrabold text-slate-700 dark:text-slate-300">
@@ -1012,13 +1102,13 @@ export default function App() {
                     dir="ltr"
                     value={aiConfig.maxNumResults}
                     onChange={(e) =>
-                      updateAiConfig({ maxNumResults: Math.max(1, Math.min(15, Number(e.target.value) || 5)) })
+                      updateAiConfig({ maxNumResults: Math.max(1, Math.min(15, Number(e.target.value) || 8)) })
                     }
                     className="w-20 px-3 py-1.5 rounded-xl bg-teal-50 dark:bg-slate-800 border border-teal-300 dark:border-slate-700 text-center font-mono font-extrabold text-base text-teal-800 dark:text-teal-300"
                   />
                 </div>
                 <p className="text-xs text-slate-400">
-                  القيمة الافتراضية 5 لتقليل استهلاك التوكنات مع دقة استرجاع عالية من الـ Vector Store.
+                  القيمة الافتراضية 8 لاسترجاع نتائج دقيقة وشاملة من الـ Vector Store.
                 </p>
               </div>
 

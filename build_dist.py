@@ -80,7 +80,7 @@ html_template = f"""<!DOCTYPE html>
       THEME: 'almogam_theme_v1',
       BOOKMARKS: 'almogam_bookmarks_v1',
       FONT_SIZE: 'almogam_font_size_v1',
-      AI_CONFIG: 'almogam_ai_config_v2',
+      AI_CONFIG: 'almogam_ai_config_v3',
       AI_LOGS: 'ai_search_benchmarks'
     }};
 
@@ -138,7 +138,7 @@ html_template = f"""<!DOCTYPE html>
       }},
       vectorStoreId: DEFAULT_VECTOR_STORE_ID,
       extraVectorStoreIds: '',
-      maxNumResults: 2,
+      maxNumResults: 8,
       systemPrompt: DEFAULT_SYSTEM_PROMPT
     }};
 
@@ -170,6 +170,7 @@ html_template = f"""<!DOCTYPE html>
       selectedDictId: 'fiqhi_main',
       selectedLetter: 'الكل',
       searchQuery: '',
+      pinnedEntryId: null,
       expandedIds: new Set(['fiqh_1']),
       visibleCount: 12,
       allDictionaries: [],
@@ -239,6 +240,25 @@ html_template = f"""<!DOCTYPE html>
         .replace(/"/g, '&quot;');
     }}
 
+    function extractCrossReference(definition) {{
+      if (!definition) return null;
+      const match = definition.match(/(راجع|يراجع|انظر)\\s+(?:ما\\s+(?:يأتي|سبق)\\s+(?:أيضا\\s+|أيضاً\\s+)?في\\s+)?(?:مادة|لفظ|كلمة|باب)?\\s*[:：]?\\s*[«"(\\[]?([^»")\\].،؛:\\n]{{2,28}})[»")\\]]?/);
+      if (!match) return null;
+      const verb = match[1] === 'انظر' ? 'انظر' : 'راجع';
+      const rawTarget = match[2].replace(/[«»"()[\\]]/g, '').trim();
+      if (!rawTarget) return null;
+      const skipBooks = [
+        'اللسان', 'التهذيب', 'الديوان', 'صحيح', 'الصبح', 'إرشاد', 'الصحاح',
+        'القاموس', 'المحكم', 'جمهرة', 'السبعة', 'تفسيره', 'الحيوان', 'ضعيف',
+        'الشرائع', 'اللمعة', 'المكاسب', 'التحرير', 'الجواهر', 'العروة',
+        'المبسوط', 'المصباح', 'الفتاوى', 'محاشي', 'المجمع'
+      ];
+      if (skipBooks.some(b => rawTarget.includes(b)) || /\\b(?:ص|ج)\\s*[0-9٠-٩۱-۹]/.test(rawTarget)) {{
+        return null;
+      }}
+      return {{ verb, target: rawTarget }};
+    }}
+
     window.setThemeMode = function(isDark) {{
       state.darkMode = isDark;
       localStorage.setItem(STORAGE_KEYS.THEME, state.darkMode ? 'dark' : 'light');
@@ -281,12 +301,14 @@ html_template = f"""<!DOCTYPE html>
     }};
 
     window.onDictSearchInput = function(val) {{
+      state.pinnedEntryId = null;
       state.searchQuery = val;
       state.visibleCount = 12;
       renderContentOnly();
     }};
 
     window.clearSearch = function() {{
+      state.pinnedEntryId = null;
       state.searchQuery = '';
       state.visibleCount = 12;
       renderApp();
@@ -345,21 +367,50 @@ html_template = f"""<!DOCTYPE html>
 
     window.jumpToTerm = function(term, dictId, entryId, ev) {{
       if (ev) ev.stopPropagation();
-      const cleaned = term.replace(/[«»"()]/g, '').trim();
-      if (dictId && state.allDictionaries.some(d => d.id === dictId)) {{
-        state.selectedDictId = dictId;
+      const cleaned = (term || '')
+        .replace(/^[«"(\\[]+|[»")\\].،؛:]+$/g, '')
+        .replace(/[«»"()[\\]]/g, '')
+        .trim();
+      const targetDictId = (dictId && state.allDictionaries.some(d => d.id === dictId)) ? dictId : state.selectedDictId;
+      const targetDict = state.allDictionaries.find(d => d.id === targetDictId) || state.allDictionaries[0];
+      state.selectedDictId = targetDictId;
+
+      let targetEntry = null;
+      if (entryId && targetDict) {{
+        targetEntry = targetDict.preparedEntries.find(item => item.id === entryId) || null;
       }}
+      if (!targetEntry && targetDict && cleaned) {{
+        const searchMatches = smartSearchEntries(targetDict.preparedEntries, cleaned, {{
+          letterFilter: 'الكل',
+          searchScope: 'all'
+        }});
+        if (searchMatches.length > 0) {{
+          targetEntry = searchMatches[0];
+        }}
+      }}
+
       state.selectedLetter = 'الكل';
       state.activeTab = 'dictionary';
+      state.visibleCount = 12;
       state.searchQuery = cleaned;
-      if (entryId) {{
-        state.expandedIds.add(entryId);
+
+      if (targetEntry) {{
+        state.pinnedEntryId = targetEntry.id;
+        state.expandedIds = new Set([targetEntry.id]);
+      }} else if (entryId) {{
+        state.pinnedEntryId = entryId;
+        state.expandedIds = new Set([entryId]);
       }}
+
       state.selectedFullEntryModal = null;
       state.aiSheetOpen = false;
       renderApp();
       renderModals();
-      showToast(`عرض: ${{cleaned}}`);
+      window.scrollTo({{ top: 0, behavior: 'smooth' }});
+      setTimeout(() => {{
+        window.scrollTo({{ top: 0, behavior: 'smooth' }});
+      }}, 60);
+      showToast(targetEntry ? `عرض: ${{targetEntry.term}}` : `عرض: ${{cleaned}}`);
     }};
 
     window.loadMore = function() {{
@@ -408,7 +459,7 @@ html_template = f"""<!DOCTYPE html>
     }};
 
     window.onAiMaxNumResultsChange = function(val) {{
-      state.aiConfig.maxNumResults = Math.max(1, Math.min(15, Number(val) || 5));
+      state.aiConfig.maxNumResults = Math.max(1, Math.min(15, Number(val) || 8));
       saveAiConfig();
     }};
 
@@ -476,7 +527,7 @@ html_template = f"""<!DOCTYPE html>
           model: modelName,
           apiKey,
           vectorStoreIds: storeIds,
-          maxNumResults: Number(state.aiConfig.maxNumResults) || 5,
+          maxNumResults: Number(state.aiConfig.maxNumResults) || 8,
           systemPrompt: state.aiConfig.systemPrompt || DEFAULT_SYSTEM_PROMPT,
           userQuery: state.aiQuery.trim(),
           scopeFilter: state.aiScope,
@@ -666,12 +717,20 @@ html_template = f"""<!DOCTYPE html>
     function getFilteredData() {{
       const currentDict = state.allDictionaries.find(d => d.id === state.selectedDictId) || state.allDictionaries[0];
       const bookmarksSet = new Set(state.bookmarks);
-      const filtered = smartSearchEntries(currentDict.preparedEntries, state.searchQuery, {{
+      let filtered = smartSearchEntries(currentDict.preparedEntries, state.searchQuery, {{
         letterFilter: state.activeTab === 'home' ? 'الكل' : state.selectedLetter,
         searchScope: 'all',
         onlyBookmarks: state.activeTab === 'bookmarks',
         bookmarksSet
       }});
+      if (state.pinnedEntryId && (state.searchQuery || '').trim()) {{
+        const pinned =
+          filtered.find(e => e.id === state.pinnedEntryId) ||
+          currentDict.preparedEntries.find(e => e.id === state.pinnedEntryId);
+        if (pinned) {{
+          filtered = [pinned, ...filtered.filter(e => e.id !== state.pinnedEntryId)];
+        }}
+      }}
       return {{ currentDict, filtered, bookmarksSet }};
     }}
 
@@ -690,17 +749,20 @@ html_template = f"""<!DOCTYPE html>
         const isOpen = state.expandedIds.has(entry.id);
         const isFav = bookmarksSet.has(entry.id);
         const firstChar = entry.term.replace(/^ال/, '').charAt(0) || 'أ';
-        const refMatch = entry.definition.match(/راجع\\s+(?:لفظ|كلمة)?\\s*[«"(\\[]?([^»")\\].،]{{2,25}})[»")\\]]?/);
+        const refInfo = extractCrossReference(entry.definition);
 
         return `
-          <div onclick="toggleCard('${{entry.id}}')" class="rounded-3xl transition-all duration-200 cursor-pointer border ${{isOpen ? 'bg-white dark:bg-slate-900 border-teal-500 shadow-lg ring-2 ring-teal-500/20' : 'bg-white dark:bg-slate-900/90 border-slate-200/90 dark:border-slate-800 shadow-sm active:scale-[0.99]'}}">
+          <div id="entry-card-${{entry.id}}" onclick="toggleCard('${{entry.id}}')" class="rounded-3xl transition-all duration-200 cursor-pointer border ${{isOpen ? 'bg-white dark:bg-slate-900 border-teal-500 shadow-lg ring-2 ring-teal-500/20' : 'bg-white dark:bg-slate-900/90 border-slate-200/90 dark:border-slate-800 shadow-sm active:scale-[0.99]'}}">
             <div class="p-5 flex items-center justify-between gap-3">
               <div class="flex items-center gap-3.5 min-w-0">
                 <div class="w-12 h-12 rounded-2xl flex items-center justify-center font-extrabold text-lg shrink-0 ${{isOpen ? 'bg-teal-600 text-white shadow-md' : 'bg-teal-50 dark:bg-slate-800 text-teal-700 dark:text-teal-400 border border-teal-200/60 dark:border-slate-700'}}">
                   ${{escapeHtml(firstChar)}}
                 </div>
                 <div class="min-w-0">
-                  <h2 style="font-size: ${{currentFont.termSize}};" class="font-extrabold text-slate-900 dark:text-white leading-snug">${{escapeHtml(entry.term)}}</h2>
+                  <div class="flex flex-wrap items-center gap-2">
+                    <h2 style="font-size: ${{currentFont.termSize}};" class="font-extrabold text-slate-900 dark:text-white leading-snug">${{escapeHtml(entry.term)}}</h2>
+                    ${{!isOpen && refInfo ? `<button onclick="jumpToTerm('${{escapeHtml(refInfo.target)}}', '${{currentDict.id}}', null, event)" class="text-xs font-bold px-2.5 py-1 rounded-xl bg-amber-100 hover:bg-amber-200 dark:bg-amber-950/80 text-amber-800 dark:text-amber-300 transition shadow-xs">↗ ${{escapeHtml(refInfo.verb)}}: ${{escapeHtml(refInfo.target)}}</button>` : ''}}
+                  </div>
                   ${{!isOpen ? `<p class="text-xs text-slate-500 dark:text-slate-400 mt-1">باب ${{escapeHtml(entry.letter)}} • ص ${{entry.page || 1}}</p>` : ''}}
                 </div>
               </div>
@@ -718,7 +780,7 @@ html_template = f"""<!DOCTYPE html>
                 </p>
                 <div class="flex flex-wrap items-center gap-2 mt-3 mb-4">
                   <span class="text-xs font-bold px-3 py-1 rounded-xl bg-teal-100/80 dark:bg-teal-950/80 text-teal-800 dark:text-teal-300">باب حرف ${{escapeHtml(entry.letter)}} (ص ${{entry.page || 1}})</span>
-                  ${{refMatch ? `<button onclick="jumpToTerm('${{escapeHtml(refMatch[1])}}', '${{currentDict.id}}', null, event)" class="text-xs font-bold px-3 py-1 rounded-xl bg-amber-100 dark:bg-amber-950/70 text-amber-800 dark:text-amber-300">↗ راجع: ${{escapeHtml(refMatch[1])}}</button>` : ''}}
+                  ${{refInfo ? `<button onclick="jumpToTerm('${{escapeHtml(refInfo.target)}}', '${{currentDict.id}}', null, event)" class="text-xs font-bold px-3 py-1.5 rounded-xl bg-amber-100 hover:bg-amber-200 active:scale-95 dark:bg-amber-950/70 text-amber-800 dark:text-amber-300 transition shadow-xs">↗ ${{escapeHtml(refInfo.verb)}}: ${{escapeHtml(refInfo.target)}}</button>` : ''}}
                 </div>
                 <button onclick="copyEntry('${{entry.id}}', event)" class="w-full py-3.5 rounded-2xl bg-teal-600 hover:bg-teal-700 active:scale-95 text-white text-sm font-extrabold shadow-md transition">📋 نسخ الجواب</button>
               </div>
@@ -860,9 +922,9 @@ html_template = f"""<!DOCTYPE html>
             <div>
               <div class="flex items-center justify-between mb-1.5">
                 <label class="text-sm font-extrabold text-slate-700 dark:text-slate-300">الحد الأقصى لنتائج البحث السحابي (max_num_results):</label>
-                <input type="number" min="1" max="15" dir="ltr" value="${{state.aiConfig.maxNumResults || 5}}" oninput="onAiMaxNumResultsChange(this.value)" class="w-20 px-3 py-1.5 rounded-xl bg-teal-50 dark:bg-slate-800 border border-teal-300 dark:border-slate-700 text-center font-mono font-extrabold text-base text-teal-800 dark:text-teal-300" />
+                <input type="number" min="1" max="15" dir="ltr" value="${{state.aiConfig.maxNumResults || 8}}" oninput="onAiMaxNumResultsChange(this.value)" class="w-20 px-3 py-1.5 rounded-xl bg-teal-50 dark:bg-slate-800 border border-teal-300 dark:border-slate-700 text-center font-mono font-extrabold text-base text-teal-800 dark:text-teal-300" />
               </div>
-              <p class="text-xs text-slate-400">القيمة الافتراضية 5 لتقليل استهلاك التوكنات مع دقة استرجاع عالية.</p>
+              <p class="text-xs text-slate-400">القيمة الافتراضية 8 لاسترجاع نتائج دقيقة وشاملة من الـ Vector Store.</p>
             </div>
 
             <div>

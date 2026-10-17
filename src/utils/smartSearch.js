@@ -149,14 +149,32 @@ export function smartSearchEntries(entries, rawQuery, options = {}) {
     }
   }
 
+  const stripTashkeelOnly = (s) => (s || '').toString().replace(/[\u064B-\u065F\u0670\u0640]/g, '').trim();
+  const cleanRawQuery = stripTashkeelOnly(rawQuery).replace(/^[«"(\[]+|[»")\].،؛:]+$/g, '').trim();
+
   const scoredResults = [];
 
   for (const entry of filtered) {
     const normTerm = entry._normTerm ?? normalizeArabic(entry.term);
     const stemTerm = entry._stemTerm ?? normTerm.split(' ').map(stemArabicWord).join(' ');
     const normDef = entry._normDef ?? normalizeArabic(entry.definition);
+    const rawTermClean = stripTashkeelOnly(entry.term);
+    const rawTermTokens = rawTermClean.split(/[\s()،,/-]+/).filter(Boolean);
+    const normTermTokens = normTerm.split(/\s+/).filter(Boolean);
+    const isReferralStub = /^(?:انظر|راجع|يراجع)\b/.test(stripTashkeelOnly(entry.definition));
 
     let score = 0;
+
+    // 0. تطابق دقيق جداً مع الجذر أو أحد صيغه (مع الحفاظ على الهمزات أولاً ثم بالتطبيع)
+    if (rawTermClean === cleanRawQuery) {
+      score += isReferralStub ? 3500 : 5000;
+    } else if (rawTermTokens.includes(cleanRawQuery)) {
+      score += isReferralStub ? 3000 : 4500;
+    } else if (normTerm === normQuery) {
+      score += isReferralStub ? 2000 : 3200;
+    } else if (normTermTokens.includes(normQuery)) {
+      score += isReferralStub ? 1800 : 2800;
+    }
 
     // 1. تطابق تام أو شبه تام مع العنوان (المصطلح)
     if (normTerm === normQuery || stemTerm === normQuery) {

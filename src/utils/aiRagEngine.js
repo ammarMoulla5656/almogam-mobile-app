@@ -1,7 +1,7 @@
 /**
  * محرك البحث الدلالي السحابي والمحلي:
  * 1. OpenAI Responses API (/v1/responses) مع أداة file_search ومخزن المتجهات Vector Store:
- *    vs_6ad37a3dabac81918cc341f5c2bd0d02
+ *    vs_6ad393307d888191a09a70af30752080
  * 2. Google Gemini Interactions API الرسمية (https://generativelanguage.googleapis.com/v1beta/interactions)
  *    وفق التوثيق الرسمي (https://ai.google.dev/gemini-api/docs/get-started) والنماذج المعتمدة:
  *    gemini-3.8-flash, gemini-3.5-flash-lite, gemini-4-argon, gemini-3.6-flash, gemini-3.1-flash-lite, gemini-3.1-pro-preview, gemini-3-flash-preview
@@ -9,14 +9,15 @@
 
 import { normalizeArabic, smartSearchEntries } from './smartSearch.js';
 
-export const DEFAULT_VECTOR_STORE_ID = 'vs_6ad37a3dabac81918cc341f5c2bd0d02';
+export const DEFAULT_VECTOR_STORE_ID = 'vs_6ad393307d888191a09a70af30752080';
 
-export const DEFAULT_SYSTEM_PROMPT = `أنت محرك بحث معجمي فقهي مقتصد بالتوكنات. استخرج المصطلحات المطابقة لسؤال المستخدم من أداة file_search حصراً.
-القواعد الصارمة:
-1. لتوفير التوكنات: استدعِ file_search مرة واحدة فقط وباستعلام واحد قصير (Query واحد فقط يجمع أهم 3 كلمات مفتاحية معجمية بدون تكرار استعلامات).
-2. استخرج فقط المصطلحات الحقيقية الظاهرة في نتائج البحث (من 1 إلى 5 مصطلحات كحد أقصى). ممنوع تأليف مصطلح أو تخمين id أو وضع page: 0.
-3. انسخ (id, term, dictionaryId, page, source) حرفياً من النص، واجعل short_meaning ملخصاً من النص لا يتجاوز 15 كلمة.
-4. أرجع JSON فقط مطابقاً للمخطط.`;
+export const DEFAULT_SYSTEM_PROMPT = `أنت محرك بحث معجمي فقهي سريع. مهمتك فهم سؤال المستخدم بالعامية أو الفصحى واستخراج 5 مصطلحات من أداة file_search.
+
+قواعد السرعة والدقة:
+1. استدعِ أداة file_search مرة واحدة فقط بمجموعة كلمات مفتاحية فقهية مركزة ترادف معنى سؤال المستخدم (مثلاً للبول والغائط: "سلس مسلوس حفيظة مبطون استبراء حدث أخبثان عذرة").
+2. لا يجب أن تحتوي قائمة (results) دائماً على 5 مصطلحات كاملة: ضع في البداية المصطلحات المطابقة تماماً للسؤال، ثم أكمل الباقي إلى 3 مصطلحات قريبة او تشابة لكن في حال تطلب 5 اكتلبها واذا لم يتطلب لا داعي لكن ابحث على المعنى بدقة(مثل أبواب الطهارة أو الحدث أو التخلي) الظاهرة أمامك في نتائج البحث، ولا ترجع أقل من 5 مصطلحات أبداً.
+3. التزم بنص المعجم حرفياً في حقل short_meaning (ملخص لا يتجاوز 15 كلمة) ولا تؤلف من خارج النص.
+4. أرجع النتيجة بصيغة JSON فقط مطابقة للمخطط`;
 
 export const AI_PROVIDERS = [
   {
@@ -135,7 +136,7 @@ export function buildOpenAiResponsesRequestBody({
   instructions,
   userQuery,
   vectorStoreIds,
-  maxNumResults = 2,
+  maxNumResults = 8,
   scopeFilter = 'all'
 }) {
   const validStoreIds = (Array.isArray(vectorStoreIds) ? vectorStoreIds : [vectorStoreIds])
@@ -157,13 +158,13 @@ export function buildOpenAiResponsesRequestBody({
     model: (model || 'gpt-4o-mini').trim(),
     instructions: instructions || DEFAULT_SYSTEM_PROMPT,
     input: `${userQuery}${scopeHint}`,
-    max_output_tokens: 350,
+    max_output_tokens: 700,
     max_tool_calls: 1,
     tools: [
       {
         type: 'file_search',
         vector_store_ids: validStoreIds,
-        max_num_results: Number(maxNumResults) || 2
+        max_num_results: Number(maxNumResults) || 8
       }
     ],
     text: {
@@ -400,7 +401,7 @@ export async function executeCloudSemanticSearch({
   model = 'gpt-4o-mini',
   apiKey = '',
   vectorStoreIds = [DEFAULT_VECTOR_STORE_ID],
-  maxNumResults = 5,
+  maxNumResults = 8,
   systemPrompt = DEFAULT_SYSTEM_PROMPT,
   userQuery = '',
   scopeFilter = 'all',
