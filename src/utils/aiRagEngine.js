@@ -190,20 +190,27 @@ export function buildOpenAiResponsesRequestBody({
 /**
  * بناء جسم الطلب القياسي لـ Google Gemini Interactions API
  * وفق التوثيق الرسمي: https://ai.google.dev/gemini-api/docs/get-started
+ * و https://ai.google.dev/gemini-api/docs/thinking
  */
 export function buildGeminiInteractionsRequestBody({
   model,
   systemInstruction,
-  inputPrompt
+  instructions,
+  inputPrompt,
+  userQuery,
+  localContextText
 }) {
   const cleanModel = normalizeGeminiModelName(model);
+  const resolvedInput =
+    inputPrompt ||
+    `سؤال المستخدم: "${userQuery || ''}"\n\nمقتطفات المعجم:\n${localContextText || ''}\n\nأرجع JSON فقط مطابقاً للمخطط.`;
   return {
     model: cleanModel,
-    system_instruction: systemInstruction || DEFAULT_SYSTEM_PROMPT,
-    input: inputPrompt,
+    system_instruction: systemInstruction || instructions || DEFAULT_SYSTEM_PROMPT,
+    input: resolvedInput,
     generation_config: {
-      temperature: 0.1,
-      max_output_tokens: 450
+      thinking_level: 'low',
+      temperature: 0.1
     },
     response_format: {
       type: 'text',
@@ -323,7 +330,10 @@ export function parseOpenAiResponsesOutput(apiResponseData) {
         // ignore
       }
     }
-    return { results: [], message: rawJsonText };
+    const cleanMsg = cleaned.startsWith('{')
+      ? 'انقطع رد النموذج قبل اكتمال صيغة JSON (incomplete)، يرجى إعادة المحاولة.'
+      : rawJsonText;
+    return { results: [], message: cleanMsg };
   }
 }
 
@@ -449,8 +459,9 @@ export async function executeCloudSemanticSearch({
     };
   }
 
-  // تحضير مقتطفات المعجم للمزودات الأخرى
-  const localCands = retrieveLocalCandidates(allDictionaries, userQuery, scopeFilter, maxNumResults);
+  // تحضير مقتطفات المعجم للمزودات الأخرى (إرسال أفضل 12-15 مرشحاً ليختار النموذج أدقها بحد أقصى maxNumResults)
+  const candidatePoolCount = Math.max((Number(maxNumResults) || 5) * 3, 12);
+  const localCands = retrieveLocalCandidates(allDictionaries, userQuery, scopeFilter, candidatePoolCount);
   const contextLines = localCands
     .map(
       (c) =>
@@ -458,7 +469,7 @@ export async function executeCloudSemanticSearch({
     )
     .join('\n');
 
-  const promptForOtherProvider = `سؤال المستخدم: "${userQuery}"\n\nمقتطفات المعجم:\n${contextLines}\n\nأرجع JSON فقط مطابقاً للمخطط: {"results": [{"id":"","term":"","dictionaryId":"","page":1,"short_meaning":"","source":""}], "message": ""}`;
+  const promptForOtherProvider = `سؤال المستخدم: "${userQuery}"\n\nمقتطفات المعجم:\n${contextLines}\n\nأرجع JSON فقط مطابقاً للمخطط (بحد أقصى ${Number(maxNumResults) || 5} نتائج): {"results": [{"id":"","term":"","dictionaryId":"","page":1,"short_meaning":"","source":""}], "message": ""}`;
 
   // المسار ٢: Google Gemini Interactions API الرسمية (https://generativelanguage.googleapis.com/v1beta/interactions)
   if (provider === 'gemini') {

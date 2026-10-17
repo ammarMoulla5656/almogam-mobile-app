@@ -77,7 +77,15 @@ const SEMANTIC_EXPANSIONS = {
   'ميت': ['اموات', 'دفن', 'كفن', 'قبر', 'احتضار', 'تحنيط'],
   'صلاه': ['ركوع', 'سجود', 'قنوت', 'تكبير', 'تشهد', 'قبله', 'نافله'],
   'طهاره': ['وضوء', 'غسل', 'تيمم', 'ماء', 'نجاسه', 'استنجاء', 'استبراء'],
-  'بول': ['استبراء', 'استنجاء', 'حدث', 'مسلوس', 'خبث'],
+  'بول': ['سلس', 'مسلوس', 'استبراء', 'استنجاء', 'حدث', 'خبث', 'مخرج'],
+  'غائط': ['مبطون', 'بطن', 'عذره', 'نجو', 'حدث', 'خبث'],
+  'غايط': ['مبطون', 'بطن', 'عذره', 'نجو', 'حدث', 'خبث'],
+  'يفقد': ['سلس', 'مسلوس', 'مبطون', 'ضبط', 'استمساك', 'يستمسكه', 'منعه', 'يقدر', 'داء'],
+  'فقد': ['سلس', 'مسلوس', 'مبطون', 'ضبط', 'استمساك', 'يستمسكه', 'منعه'],
+  'سيطره': ['ضبط', 'استمساك', 'يستمسكه', 'منعه', 'سلس', 'مسلوس', 'مبطون', 'يقدر'],
+  'يتحكم': ['ضبط', 'استمساك', 'يستمسكه', 'منعه', 'سلس', 'مسلوس', 'مبطون'],
+  'تحكم': ['ضبط', 'استمساك', 'يستمسكه', 'منعه', 'سلس', 'مسلوس', 'مبطون'],
+  'يمسك': ['ضبط', 'استمساك', 'يستمسكه', 'منعه', 'سلس', 'مسلوس', 'مبطون'],
   'حج': ['طواف', 'سعي', 'احرام', 'عرفه', 'مني', 'جمره', 'هدي', 'ميقات'],
   'دم': ['حيض', 'نفاس', 'استحاضه', 'شجاج', 'جرح'],
   'سمك': ['حوت', 'فلس', 'بحر', 'صيد', 'اطعمه'],
@@ -120,7 +128,7 @@ export function smartSearchEntries(entries, rawQuery, options = {}) {
   const STOP_WORDS = new Set([
     'ما', 'ماذا', 'من', 'هل', 'كيف', 'اين', 'متي', 'لماذا', 'كم', 'اي',
     'هو', 'هي', 'هم', 'ها', 'ان', 'كان', 'يكون', 'تكون', 'في', 'من',
-    'الي', 'علي', 'عن', 'مع', 'او', 'ثم', 'بل', 'لا', 'لم', 'لن',
+    'الي', 'علي', 'عن', 'مع', 'او', 'ام', 'ثم', 'بل', 'لا', 'لم', 'لن',
     'هذا', 'هذه', 'ذلك', 'تلك', 'الذي', 'التي', 'الذين', 'معني', 'تفسير',
     'شرح', 'مراد', 'حكم', 'كلمه', 'مصطلح', 'عباره', 'يعني', 'شنو', 'شو', 'ايش'
   ]);
@@ -131,7 +139,7 @@ export function smartSearchEntries(entries, rawQuery, options = {}) {
   const queryStems = queryTokens.map(stemArabicWord);
 
   // توسيع البحث بالمرادفات الدلالية
-  const expandedStems = new Set(queryStems);
+  const expandedStems = new Set();
   for (const token of [...queryTokens, ...queryStems]) {
     if (SEMANTIC_EXPANSIONS[token]) {
       for (const syn of SEMANTIC_EXPANSIONS[token]) {
@@ -167,6 +175,7 @@ export function smartSearchEntries(entries, rawQuery, options = {}) {
     // 3. فحص كل كلمة من كلمات البحث (مع الجذور، المرادفات، والتسامح الإملائي)
     let matchedTokensCount = 0;
     const termWords = normTerm.split(' ');
+    const defWords = normDef.split(' ');
 
     for (let i = 0; i < queryTokens.length; i++) {
       const qToken = queryTokens[i];
@@ -176,16 +185,22 @@ export function smartSearchEntries(entries, rawQuery, options = {}) {
       if (normTerm.includes(qToken) || (qStem.length >= 2 && stemTerm.includes(qStem))) {
         score += 45;
         tokenMatched = true;
-      } else if (searchScope !== 'termOnly' && (normDef.includes(qToken) || (qStem.length >= 2 && normDef.includes(qStem)))) {
-        score += 25;
+      } else if (
+        searchScope !== 'termOnly' &&
+        (defWords.includes(qToken) || defWords.some((dw) => dw.includes(qToken) || (qStem.length >= 3 && stemArabicWord(dw) === qStem)))
+      ) {
+        score += 35;
+        tokenMatched = true;
+      } else if (searchScope !== 'termOnly' && qStem.length >= 3 && normDef.includes(qStem)) {
+        score += 22;
         tokenMatched = true;
       } else {
-        // فحص التسامح الإملائي (Fuzzy Matching) مع كلمات المصطلح
-        if (qToken.length >= 3) {
+        // فحص التسامح الإملائي (Fuzzy Matching) مع كلمات المصطلح للكلمات الطويلة فقط (>= 4 أحرف)
+        if (qStem.length >= 4) {
           for (const tw of termWords) {
             const dist = levenshteinDistance(stemArabicWord(tw), qStem);
             if (dist === 1) {
-              score += 30;
+              score += 15;
               tokenMatched = true;
               break;
             }
@@ -198,24 +213,28 @@ export function smartSearchEntries(entries, rawQuery, options = {}) {
       }
     }
 
-    // 4. فحص المرادفات الدلالية في المصطلح والشرح إذا لم تتطابق الكلمة حرفياً
-    if (score === 0) {
+    // 4. فحص المرادفات الدلالية دائماً لتعزيز المصطلحات المطابقة للمعنى (مثل: يفقد السيطرة -> سلس، مسلوس، مبطون، ضبط)
+    if (expandedStems.size > 0) {
+      let synBonus = 0;
       for (const syn of expandedStems) {
-        if (syn.length >= 2) {
-          if (normTerm.includes(syn)) {
-            score += 35;
+        if (syn.length >= 3) {
+          if (normTerm === syn || stemTerm === syn || termWords.includes(syn)) {
+            synBonus += 42;
+            matchedTokensCount++;
+          } else if (normTerm.includes(syn)) {
+            synBonus += 28;
             matchedTokensCount++;
           } else if (searchScope !== 'termOnly' && normDef.includes(syn)) {
-            score += 18;
-            matchedTokensCount++;
+            synBonus += 18;
           }
         }
       }
+      score += Math.min(synBonus, 110);
     }
 
-    // مكافأة إضافية إذا تحققت جميع كلمات البحث في العنصر
+    // مكافأة إضافية إذا تحققت كلمات البحث في العنصر
     if (queryTokens.length > 1 && matchedTokensCount >= queryTokens.length) {
-      score += 50;
+      score += 35;
     }
 
     if (score > 0) {

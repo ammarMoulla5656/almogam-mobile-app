@@ -142013,7 +142013,15 @@ const SEMANTIC_EXPANSIONS = {
   'ميت': ['اموات', 'دفن', 'كفن', 'قبر', 'احتضار', 'تحنيط'],
   'صلاه': ['ركوع', 'سجود', 'قنوت', 'تكبير', 'تشهد', 'قبله', 'نافله'],
   'طهاره': ['وضوء', 'غسل', 'تيمم', 'ماء', 'نجاسه', 'استنجاء', 'استبراء'],
-  'بول': ['استبراء', 'استنجاء', 'حدث', 'مسلوس', 'خبث'],
+  'بول': ['سلس', 'مسلوس', 'استبراء', 'استنجاء', 'حدث', 'خبث', 'مخرج'],
+  'غائط': ['مبطون', 'بطن', 'عذره', 'نجو', 'حدث', 'خبث'],
+  'غايط': ['مبطون', 'بطن', 'عذره', 'نجو', 'حدث', 'خبث'],
+  'يفقد': ['سلس', 'مسلوس', 'مبطون', 'ضبط', 'استمساك', 'يستمسكه', 'منعه', 'يقدر', 'داء'],
+  'فقد': ['سلس', 'مسلوس', 'مبطون', 'ضبط', 'استمساك', 'يستمسكه', 'منعه'],
+  'سيطره': ['ضبط', 'استمساك', 'يستمسكه', 'منعه', 'سلس', 'مسلوس', 'مبطون', 'يقدر'],
+  'يتحكم': ['ضبط', 'استمساك', 'يستمسكه', 'منعه', 'سلس', 'مسلوس', 'مبطون'],
+  'تحكم': ['ضبط', 'استمساك', 'يستمسكه', 'منعه', 'سلس', 'مسلوس', 'مبطون'],
+  'يمسك': ['ضبط', 'استمساك', 'يستمسكه', 'منعه', 'سلس', 'مسلوس', 'مبطون'],
   'حج': ['طواف', 'سعي', 'احرام', 'عرفه', 'مني', 'جمره', 'هدي', 'ميقات'],
   'دم': ['حيض', 'نفاس', 'استحاضه', 'شجاج', 'جرح'],
   'سمك': ['حوت', 'فلس', 'بحر', 'صيد', 'اطعمه'],
@@ -142056,7 +142064,7 @@ function smartSearchEntries(entries, rawQuery, options = {}) {
   const STOP_WORDS = new Set([
     'ما', 'ماذا', 'من', 'هل', 'كيف', 'اين', 'متي', 'لماذا', 'كم', 'اي',
     'هو', 'هي', 'هم', 'ها', 'ان', 'كان', 'يكون', 'تكون', 'في', 'من',
-    'الي', 'علي', 'عن', 'مع', 'او', 'ثم', 'بل', 'لا', 'لم', 'لن',
+    'الي', 'علي', 'عن', 'مع', 'او', 'ام', 'ثم', 'بل', 'لا', 'لم', 'لن',
     'هذا', 'هذه', 'ذلك', 'تلك', 'الذي', 'التي', 'الذين', 'معني', 'تفسير',
     'شرح', 'مراد', 'حكم', 'كلمه', 'مصطلح', 'عباره', 'يعني', 'شنو', 'شو', 'ايش'
   ]);
@@ -142067,7 +142075,7 @@ function smartSearchEntries(entries, rawQuery, options = {}) {
   const queryStems = queryTokens.map(stemArabicWord);
 
   // توسيع البحث بالمرادفات الدلالية
-  const expandedStems = new Set(queryStems);
+  const expandedStems = new Set();
   for (const token of [...queryTokens, ...queryStems]) {
     if (SEMANTIC_EXPANSIONS[token]) {
       for (const syn of SEMANTIC_EXPANSIONS[token]) {
@@ -142103,6 +142111,7 @@ function smartSearchEntries(entries, rawQuery, options = {}) {
     // 3. فحص كل كلمة من كلمات البحث (مع الجذور، المرادفات، والتسامح الإملائي)
     let matchedTokensCount = 0;
     const termWords = normTerm.split(' ');
+    const defWords = normDef.split(' ');
 
     for (let i = 0; i < queryTokens.length; i++) {
       const qToken = queryTokens[i];
@@ -142112,16 +142121,22 @@ function smartSearchEntries(entries, rawQuery, options = {}) {
       if (normTerm.includes(qToken) || (qStem.length >= 2 && stemTerm.includes(qStem))) {
         score += 45;
         tokenMatched = true;
-      } else if (searchScope !== 'termOnly' && (normDef.includes(qToken) || (qStem.length >= 2 && normDef.includes(qStem)))) {
-        score += 25;
+      } else if (
+        searchScope !== 'termOnly' &&
+        (defWords.includes(qToken) || defWords.some((dw) => dw.includes(qToken) || (qStem.length >= 3 && stemArabicWord(dw) === qStem)))
+      ) {
+        score += 35;
+        tokenMatched = true;
+      } else if (searchScope !== 'termOnly' && qStem.length >= 3 && normDef.includes(qStem)) {
+        score += 22;
         tokenMatched = true;
       } else {
-        // فحص التسامح الإملائي (Fuzzy Matching) مع كلمات المصطلح
-        if (qToken.length >= 3) {
+        // فحص التسامح الإملائي (Fuzzy Matching) مع كلمات المصطلح للكلمات الطويلة فقط (>= 4 أحرف)
+        if (qStem.length >= 4) {
           for (const tw of termWords) {
             const dist = levenshteinDistance(stemArabicWord(tw), qStem);
             if (dist === 1) {
-              score += 30;
+              score += 15;
               tokenMatched = true;
               break;
             }
@@ -142134,24 +142149,28 @@ function smartSearchEntries(entries, rawQuery, options = {}) {
       }
     }
 
-    // 4. فحص المرادفات الدلالية في المصطلح والشرح إذا لم تتطابق الكلمة حرفياً
-    if (score === 0) {
+    // 4. فحص المرادفات الدلالية دائماً لتعزيز المصطلحات المطابقة للمعنى (مثل: يفقد السيطرة -> سلس، مسلوس، مبطون، ضبط)
+    if (expandedStems.size > 0) {
+      let synBonus = 0;
       for (const syn of expandedStems) {
-        if (syn.length >= 2) {
-          if (normTerm.includes(syn)) {
-            score += 35;
+        if (syn.length >= 3) {
+          if (normTerm === syn || stemTerm === syn || termWords.includes(syn)) {
+            synBonus += 42;
+            matchedTokensCount++;
+          } else if (normTerm.includes(syn)) {
+            synBonus += 28;
             matchedTokensCount++;
           } else if (searchScope !== 'termOnly' && normDef.includes(syn)) {
-            score += 18;
-            matchedTokensCount++;
+            synBonus += 18;
           }
         }
       }
+      score += Math.min(synBonus, 110);
     }
 
-    // مكافأة إضافية إذا تحققت جميع كلمات البحث في العنصر
+    // مكافأة إضافية إذا تحققت كلمات البحث في العنصر
     if (queryTokens.length > 1 && matchedTokensCount >= queryTokens.length) {
-      score += 50;
+      score += 35;
     }
 
     if (score > 0) {
@@ -142354,20 +142373,27 @@ function buildOpenAiResponsesRequestBody({
 /**
  * بناء جسم الطلب القياسي لـ Google Gemini Interactions API
  * وفق التوثيق الرسمي: https://ai.google.dev/gemini-api/docs/get-started
+ * و https://ai.google.dev/gemini-api/docs/thinking
  */
 function buildGeminiInteractionsRequestBody({
   model,
   systemInstruction,
-  inputPrompt
+  instructions,
+  inputPrompt,
+  userQuery,
+  localContextText
 }) {
   const cleanModel = normalizeGeminiModelName(model);
+  const resolvedInput =
+    inputPrompt ||
+    `سؤال المستخدم: "${userQuery || ''}"\n\nمقتطفات المعجم:\n${localContextText || ''}\n\nأرجع JSON فقط مطابقاً للمخطط.`;
   return {
     model: cleanModel,
-    system_instruction: systemInstruction || DEFAULT_SYSTEM_PROMPT,
-    input: inputPrompt,
+    system_instruction: systemInstruction || instructions || DEFAULT_SYSTEM_PROMPT,
+    input: resolvedInput,
     generation_config: {
-      temperature: 0.1,
-      max_output_tokens: 450
+      thinking_level: 'low',
+      temperature: 0.1
     },
     response_format: {
       type: 'text',
@@ -142487,7 +142513,10 @@ function parseOpenAiResponsesOutput(apiResponseData) {
         // ignore
       }
     }
-    return { results: [], message: rawJsonText };
+    const cleanMsg = cleaned.startsWith('{')
+      ? 'انقطع رد النموذج قبل اكتمال صيغة JSON (incomplete)، يرجى إعادة المحاولة.'
+      : rawJsonText;
+    return { results: [], message: cleanMsg };
   }
 }
 
@@ -142613,8 +142642,9 @@ async function executeCloudSemanticSearch({
     };
   }
 
-  // تحضير مقتطفات المعجم للمزودات الأخرى
-  const localCands = retrieveLocalCandidates(allDictionaries, userQuery, scopeFilter, maxNumResults);
+  // تحضير مقتطفات المعجم للمزودات الأخرى (إرسال أفضل 12-15 مرشحاً ليختار النموذج أدقها بحد أقصى maxNumResults)
+  const candidatePoolCount = Math.max((Number(maxNumResults) || 5) * 3, 12);
+  const localCands = retrieveLocalCandidates(allDictionaries, userQuery, scopeFilter, candidatePoolCount);
   const contextLines = localCands
     .map(
       (c) =>
@@ -142622,7 +142652,7 @@ async function executeCloudSemanticSearch({
     )
     .join('\n');
 
-  const promptForOtherProvider = `سؤال المستخدم: "${userQuery}"\n\nمقتطفات المعجم:\n${contextLines}\n\nأرجع JSON فقط مطابقاً للمخطط: {"results": [{"id":"","term":"","dictionaryId":"","page":1,"short_meaning":"","source":""}], "message": ""}`;
+  const promptForOtherProvider = `سؤال المستخدم: "${userQuery}"\n\nمقتطفات المعجم:\n${contextLines}\n\nأرجع JSON فقط مطابقاً للمخطط (بحد أقصى ${Number(maxNumResults) || 5} نتائج): {"results": [{"id":"","term":"","dictionaryId":"","page":1,"short_meaning":"","source":""}], "message": ""}`;
 
   // المسار ٢: Google Gemini Interactions API الرسمية (https://generativelanguage.googleapis.com/v1beta/interactions)
   if (provider === 'gemini') {
