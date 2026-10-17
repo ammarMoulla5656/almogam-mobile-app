@@ -83,10 +83,10 @@ const parsed = parseOpenAiResponsesOutput(mockApiOutput);
 console.assert(parsed.results.length === 1 && parsed.results[0].term === 'الابتهال', 'Output parsing failed');
 console.log('✅ Test 2 passed: OpenAI Responses API output parsing verified.');
 
-// Test 3: Matching suggested card with full local dictionary entry
+// Test 3: Matching suggested card with full local dictionary entry (prioritizing term match over mismatched ID)
 const fullMatch = findFullEntryInDictionaries(allDictionaries, parsed.results[0]);
-console.assert(fullMatch && fullMatch.entry.id === 'fiqh_1', 'Full entry local lookup failed');
-console.log(`✅ Test 3 passed: Local dictionary lookup found "${fullMatch.entry.term}" -> "${fullMatch.entry.definition}"`);
+console.assert(fullMatch && fullMatch.entry.term === 'الابتهال', 'Full entry local lookup failed');
+console.log(`✅ Test 3 passed: Local dictionary lookup found "${fullMatch.entry.term}" (${fullMatch.entry.id}) -> "${fullMatch.entry.definition}"`);
 
 // Test 4: Benchmark logs & stats (ai_search_benchmarks.json)
 const sampleLogs = [

@@ -442,6 +442,7 @@ export async function executeCloudSemanticSearch({
     }
 
     const parsed = parseOpenAiResponsesOutput(data);
+    const reconciledResults = reconcileResultsWithDictionaries(parsed.results, allDictionaries);
     const usage = data?.usage || {};
     const inputTokens = usage.input_tokens || 0;
     const outputTokens = usage.output_tokens || 0;
@@ -450,7 +451,7 @@ export async function executeCloudSemanticSearch({
     const elapsedSeconds = Number(((performance.now() - startTime) / 1000).toFixed(2));
 
     return {
-      results: parsed.results,
+      results: reconciledResults,
       message: parsed.message,
       inputTokens,
       outputTokens,
@@ -494,6 +495,7 @@ export async function executeCloudSemanticSearch({
     }
 
     const parsed = parseGeminiInteractionsOutput(data);
+    const reconciledResults = reconcileResultsWithDictionaries(parsed.results, allDictionaries);
     const usage = data?.usage || {};
     const inputTokens = usage.total_input_tokens || usage.input_tokens || 0;
     const outputTokens = usage.total_output_tokens || usage.output_tokens || 0;
@@ -504,7 +506,7 @@ export async function executeCloudSemanticSearch({
     const elapsedSeconds = Number(((performance.now() - startTime) / 1000).toFixed(2));
 
     return {
-      results: parsed.results,
+      results: reconciledResults,
       message: parsed.message,
       inputTokens,
       outputTokens,
@@ -568,10 +570,11 @@ export async function executeCloudSemanticSearch({
   }
 
   const parsed = parseOpenAiResponsesOutput({ output_text: rawText });
+  const reconciledResults = reconcileResultsWithDictionaries(parsed.results, allDictionaries);
   const elapsedSeconds = Number(((performance.now() - startTime) / 1000).toFixed(2));
 
   return {
-    results: parsed.results,
+    results: reconciledResults,
     message: parsed.message,
     inputTokens,
     outputTokens,
@@ -580,41 +583,109 @@ export async function executeCloudSemanticSearch({
   };
 }
 
+function stripLeadingAl(normStr) {
+  return (normStr || '').replace(/^ال/, '').trim();
+}
+
 /**
  * مطابقة البطاقة المقترحة مع بيانات المعجم المحلية لفتح التعريف الكامل والأصلي
+ * تعطي الأولوية القصوى لتطابق اسم المصطلح (term) لتجنب أي إزاحة في أرقام id بين ملفات السحابة والمعجم المحلي
  */
 export function findFullEntryInDictionaries(allDictionaries, cardItem) {
-  if (!cardItem) return null;
+  if (!cardItem || !Array.isArray(allDictionaries) || allDictionaries.length === 0) return null;
   const targetId = String(cardItem.id || '').trim();
   const targetTermNorm = normalizeArabic(cardItem.term || '');
+  const targetTermBare = stripLeadingAl(targetTermNorm);
 
-  // 1. البحث بواسطة id الدقيق
-  if (targetId) {
-    for (const dict of allDictionaries) {
-      const foundById = (dict.preparedEntries || dict.entries || []).find((e) => e.id === targetId);
-      if (foundById) return { entry: foundById, dict };
+  // ترتيب المعاجم بحيث نبدأ بالمعجم المحدد في البطاقة إن وجد
+  const orderedDicts = [...allDictionaries].sort((a, b) => {
+    if (a.id === cardItem.dictionaryId) return -1;
+    if (b.id === cardItem.dictionaryId) return 1;
+    return 0;
+  });
+
+  // 1. البحث أولاً بتطابق اسم المصطلح الدقيق (مع أو بدون "ال" التعريف)
+  if (targetTermNorm) {
+    for (const dict of orderedDicts) {
+      const entries = dict.preparedEntries || dict.entries || [];
+      const exact = entries.find((e) => {
+        const eNorm = e._normTerm || normalizeArabic(e.term);
+        return eNorm === targetTermNorm || (targetTermBare.length >= 2 && stripLeadingAl(eNorm) === targetTermBare);
+      });
+      if (exact) return { entry: exact, dict };
     }
   }
 
-  // 2. البحث بواسطة تطابق اسم المصطلح (term)
-  if (targetTermNorm) {
-    for (const dict of allDictionaries) {
-      const entries = dict.preparedEntries || dict.entries || [];
-      const exact = entries.find((e) => (e._normTerm || normalizeArabic(e.term)) === targetTermNorm);
-      if (exact) return { entry: exact, dict };
+  // 2. البحث بواسطة id فقط إذا لم يكن هناك اسم مصطلح أو كان اسم المصطلح متطابقاً جزئياً مع العنصر
+  if (targetId) {
+    for (const dict of orderedDicts) {
+      const foundById = (dict.preparedEntries || dict.entries || []).find((e) => e.id === targetId);
+      if (foundById) {
+        if (!targetTermNorm) return { entry: foundById, dict };
+        const foundNorm = foundById._normTerm || normalizeArabic(foundById.term);
+        if (
+          foundNorm === targetTermNorm ||
+          stripLeadingAl(foundNorm) === targetTermBare ||
+          foundNorm.includes(targetTermNorm) ||
+          targetTermNorm.includes(foundNorm)
+        ) {
+          return { entry: foundById, dict };
+        }
+      }
     }
-    for (const dict of allDictionaries) {
+  }
+
+  // 3. البحث الجزئي باسم المصطلح ككلمة مستقلة (مثلاً "الشك" يطابق "يوم الشك")
+  if (targetTermNorm && targetTermBare.length >= 2) {
+    for (const dict of orderedDicts) {
       const entries = dict.preparedEntries || dict.entries || [];
-      const partial = entries.find(
-        (e) =>
-          (e._normTerm || normalizeArabic(e.term)).includes(targetTermNorm) ||
-          targetTermNorm.includes(e._normTerm || normalizeArabic(e.term))
-      );
+      const wordMatch = entries.find((e) => {
+        const eNorm = e._normTerm || normalizeArabic(e.term);
+        const words = eNorm.split(' ');
+        return words.some((w) => w === targetTermNorm || stripLeadingAl(w) === targetTermBare);
+      });
+      if (wordMatch) return { entry: wordMatch, dict };
+    }
+    for (const dict of orderedDicts) {
+      const entries = dict.preparedEntries || dict.entries || [];
+      const partial = entries.find((e) => {
+        const eNorm = e._normTerm || normalizeArabic(e.term);
+        return eNorm.includes(targetTermNorm) || targetTermNorm.includes(eNorm);
+      });
       if (partial) return { entry: partial, dict };
     }
   }
 
   return null;
+}
+
+/**
+ * تصحيح ومطابقة نتائج الذكاء الاصطناعي مع المعجم المحلي لضمان دقة (id, page, source) عند الضغط على أي بطاقة
+ */
+export function reconcileResultsWithDictionaries(results, allDictionaries) {
+  if (!Array.isArray(results)) return [];
+  if (!Array.isArray(allDictionaries) || allDictionaries.length === 0) return results;
+
+  return results.map((item) => {
+    const matched = findFullEntryInDictionaries(allDictionaries, item);
+    if (!matched) return item;
+    const realEntry = matched.entry;
+    const realDict = matched.dict;
+    const rawSource = String(item.source || '').trim();
+    const cleanSource =
+      !rawSource || rawSource.endsWith('.json')
+        ? (realEntry.sources || [])[0] || realDict.category || rawSource
+        : rawSource;
+
+    return {
+      ...item,
+      id: realEntry.id,
+      term: realEntry.term,
+      dictionaryId: realDict.id,
+      page: realEntry.page || item.page || 1,
+      source: cleanSource
+    };
+  });
 }
 
 /**
