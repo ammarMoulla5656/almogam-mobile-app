@@ -35,12 +35,12 @@ public class MainActivity extends BridgeActivity {
                 if (dir == null) {
                     dir = getFilesDir();
                 }
-                File jsonFile = new File(dir, "ai_benchmark_logs.json");
+                File jsonFile = new File(dir, "ai_search_benchmarks.json");
                 FileOutputStream fosJson = new FileOutputStream(jsonFile);
                 fosJson.write(jsonContent.getBytes(StandardCharsets.UTF_8));
                 fosJson.close();
 
-                File csvFile = new File(dir, "ai_benchmark_logs.csv");
+                File csvFile = new File(dir, "ai_search_benchmarks.csv");
                 FileOutputStream fosCsv = new FileOutputStream(csvFile);
                 fosCsv.write(csvContent.getBytes(StandardCharsets.UTF_8));
                 fosCsv.close();

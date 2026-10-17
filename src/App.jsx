@@ -23,15 +23,19 @@ import {
   Plus,
   RotateCcw,
   KeyRound,
-  Cpu
+  Cpu,
+  Database,
+  Trash2
 } from 'lucide-react';
 import initialData from './data/dictionaries.json';
 import { prepareEntryForSearch, smartSearchEntries } from './utils/smartSearch.js';
 import {
+  DEFAULT_VECTOR_STORE_ID,
   DEFAULT_SYSTEM_PROMPT,
   AI_PROVIDERS,
-  retrieveLocalCandidates,
-  callAiProvider,
+  getDictionaryLabel,
+  executeCloudSemanticSearch,
+  findFullEntryInDictionaries,
   convertLogsToCsv,
   computeBenchmarkStats
 } from './utils/aiRagEngine.js';
@@ -40,8 +44,8 @@ const STORAGE_KEYS = {
   THEME: 'almogam_theme_v1',
   BOOKMARKS: 'almogam_bookmarks_v1',
   FONT_SIZE: 'almogam_font_size_v1',
-  AI_CONFIG: 'almogam_ai_config_v1',
-  AI_LOGS: 'ai_benchmark_logs'
+  AI_CONFIG: 'almogam_ai_config_v2',
+  AI_LOGS: 'ai_search_benchmarks'
 };
 
 const ARABIC_CHAPTERS = [
@@ -83,24 +87,23 @@ const FONT_STYLES = {
 };
 
 const DEFAULT_AI_CONFIG = {
-  provider: 'gemini',
+  provider: 'openai',
   modelsByProvider: {
-    gemini: 'gemini-2.5-flash',
     openai: 'gpt-4o-mini',
+    gemini: 'gemini-2.5-flash',
     deepseek: 'deepseek-chat',
-    claude: 'claude-3-7-sonnet-latest',
-    custom: 'gpt-4o-mini'
+    claude: 'claude-3-7-sonnet-latest'
   },
   apiKeysByProvider: {
-    gemini: '',
     openai: '',
+    gemini: '',
     deepseek: '',
-    claude: '',
-    custom: ''
+    claude: ''
   },
-  customUrl: 'https://api.openai.com/v1/chat/completions',
-  systemPrompt: DEFAULT_SYSTEM_PROMPT,
-  maxCandidates: 6
+  vectorStoreId: DEFAULT_VECTOR_STORE_ID,
+  extraVectorStoreIds: '',
+  maxNumResults: 5,
+  systemPrompt: DEFAULT_SYSTEM_PROMPT
 };
 
 export default function App() {
@@ -154,7 +157,7 @@ export default function App() {
     }));
   }, []);
 
-  // إعدادات الذكاء الاصطناعي وسجل المقارنة
+  // إعدادات الذكاء الاصطناعي وسجل التجارب (ai_search_benchmarks.json)
   const [aiConfig, setAiConfig] = useState(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEYS.AI_CONFIG);
@@ -203,142 +206,177 @@ export default function App() {
     }
   }, []);
 
-  // حالة القائمة العائمة للبحث بالذكاء الاصطناعي (Floating AI Search Sheet)
+  // حالة النافذة العائمة للبحث الدلالي بالذكاء الاصطناعي (Floating AI Search UI)
   const [aiSheetOpen, setAiSheetOpen] = useState(false);
-  const [aiScope, setAiScope] = useState('auto'); // 'auto' | 'all' | 'fiqhi_main' | 'usuli_dict' | 'lughawi_dict'
+  const [aiScope, setAiScope] = useState('all'); // 'all' | 'fiqhi_main' | 'usuli_dict' | 'lughawi_dict'
   const [aiQuery, setAiQuery] = useState('');
-  const [aiCandidates, setAiCandidates] = useState([]);
-  const [manualTermInput, setManualTermInput] = useState('');
   const [aiLoading, setAiLoading] = useState(false);
-  const [aiResult, setAiResult] = useState(null); // { answer, tokens, responseTimeSec, provider, model, candidatesSent, query, scope }
+  const [aiResult, setAiResult] = useState(null);
   const [aiError, setAiError] = useState(null);
-  const [feedbackNote, setFeedbackNote] = useState('');
+  const [manualTermInput, setManualTermInput] = useState('');
   const [feedbackGiven, setFeedbackGiven] = useState(null); // 'good' | 'bad'
+  const [selectedFullEntryModal, setSelectedFullEntryModal] = useState(null); // { entry, dict, aiCard }
   const [showStatsModal, setShowStatsModal] = useState(false);
 
-  // تحديث المقترحات المبدئية محلياً بشكل تلقائي فور كتابة السؤال لتوفير التوكنات
-  useEffect(() => {
-    if (!aiQuery.trim()) {
-      setAiCandidates([]);
-      return;
-    }
-    const extracted = retrieveLocalCandidates(
-      allDictionaries,
-      aiQuery,
-      aiScope,
-      aiConfig.maxCandidates
-    );
-    setAiCandidates(extracted);
-  }, [aiQuery, aiScope, aiConfig.maxCandidates, allDictionaries]);
-
-  const handleAddManualCandidate = () => {
-    if (!manualTermInput.trim()) return;
-    const found = retrieveLocalCandidates(allDictionaries, manualTermInput, 'all', 1);
-    if (found.length > 0) {
-      if (!aiCandidates.some((c) => c.id === found[0].id)) {
-        setAiCandidates((prev) => [...prev, found[0]]);
-        showToast(`تمت إضافة "${found[0].term}" للمقترحات`);
-      }
-    } else {
-      setAiCandidates((prev) => [
-        ...prev,
-        {
-          id: `custom_${Date.now()}`,
-          term: manualTermInput.trim(),
-          definition: manualTermInput.trim(),
-          letter: 'مضاف',
-          page: 1,
-          dictionaryId: 'fiqhi_main',
-          dictionaryLabel: 'مضاف يدوياً',
-          sources: []
-        }
-      ]);
-    }
-    setManualTermInput('');
-  };
+  const getActiveVectorStoreIds = useCallback(() => {
+    const primary = (aiConfig.vectorStoreId || DEFAULT_VECTOR_STORE_ID).trim();
+    const extras = (aiConfig.extraVectorStoreIds || '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    return [primary, ...extras].filter(Boolean);
+  }, [aiConfig.vectorStoreId, aiConfig.extraVectorStoreIds]);
 
   const handleRunAiSearch = async () => {
     if (!aiQuery.trim()) {
-      showToast('يرجى كتابة السؤال أو المعنى أولاً');
+      showToast('يرجى كتابة سؤالك أو المعنى المراد البحث عنه أولاً');
       return;
     }
     setAiLoading(true);
     setAiError(null);
     setAiResult(null);
     setFeedbackGiven(null);
-    setFeedbackNote('');
 
-    const providerId = aiConfig.provider;
+    const providerId = aiConfig.provider || 'openai';
     const providerObj = AI_PROVIDERS.find((p) => p.id === providerId) || AI_PROVIDERS[0];
     const modelName = aiConfig.modelsByProvider[providerId] || providerObj.defaultModel;
     const apiKey = aiConfig.apiKeysByProvider[providerId] || '';
+    const storeIds = getActiveVectorStoreIds();
 
     try {
-      const res = await callAiProvider({
+      const res = await executeCloudSemanticSearch({
         provider: providerId,
         model: modelName,
         apiKey,
-        customUrl: aiConfig.customUrl,
-        systemPrompt: aiConfig.systemPrompt,
-        userQuery: aiQuery,
-        candidates: aiCandidates
+        vectorStoreIds: storeIds,
+        maxNumResults: Number(aiConfig.maxNumResults) || 5,
+        systemPrompt: aiConfig.systemPrompt || DEFAULT_SYSTEM_PROMPT,
+        userQuery: aiQuery.trim(),
+        scopeFilter: aiScope,
+        allDictionaries
       });
 
       setAiResult({
-        answer: res.answer,
-        tokens: res.tokens,
-        responseTimeSec: res.responseTimeSec,
+        results: res.results || [],
+        message: res.message || '',
+        inputTokens: res.inputTokens || 0,
+        outputTokens: res.outputTokens || 0,
+        totalTokens: res.totalTokens || 0,
+        responseTimeSec: res.responseTimeSec || 0,
         provider: providerObj.name,
         providerId,
         model: modelName,
-        candidatesSent: aiCandidates,
-        query: aiQuery,
+        vectorStoreId: storeIds.join(', '),
+        query: aiQuery.trim(),
         scope: aiScope
       });
     } catch (err) {
-      setAiError(err.message || 'حدث خطأ أثناء الاتصال بالنموذج');
+      setAiError(err.message || 'حدث خطأ أثناء الاتصال بسحابة الذكاء الاصطناعي');
     } finally {
       setAiLoading(false);
     }
   };
 
+  // حذف بطاقة غير مناسبة من النتائج المقترحة قبل التقييم
+  const handleRemoveSuggestedCard = (idx, e) => {
+    if (e) e.stopPropagation();
+    setAiResult((prev) => {
+      if (!prev) return prev;
+      const updated = prev.results.filter((_, i) => i !== idx);
+      return { ...prev, results: updated };
+    });
+  };
+
+  // إضافة مصطلح يدوياً لقائمة النتائج المقترحة قبل التقييم
+  const handleAddManualSuggestedCard = () => {
+    if (!manualTermInput.trim() || !aiResult) return;
+    const matched = findFullEntryInDictionaries(allDictionaries, { term: manualTermInput.trim() });
+    const newCard = matched
+      ? {
+          id: matched.entry.id,
+          term: matched.entry.term,
+          dictionaryId: matched.dict.id,
+          page: matched.entry.page || 1,
+          short_meaning: matched.entry.definition.slice(0, 110) + '...',
+          source: (matched.entry.sources || [])[0] || matched.dict.category
+        }
+      : {
+          id: `manual_${Date.now()}`,
+          term: manualTermInput.trim(),
+          dictionaryId: aiScope === 'all' ? 'fiqhi_main' : aiScope,
+          page: 1,
+          short_meaning: 'مصطلح مضاف يدوياً لتصحيح القائمة المقترحة',
+          source: 'إضافة يدوية'
+        };
+
+    setAiResult((prev) => ({
+      ...prev,
+      results: [...(prev?.results || []), newCard]
+    }));
+    setManualTermInput('');
+    showToast(`تمت إضافة "${newCard.term}" إلى البطاقات المقترحة`);
+  };
+
+  // فتح التعريف الكامل والأصلي من المعجم المحلي عند الضغط على أي بطاقة مقترحة
+  const handleOpenSuggestedCardFullView = (cardItem) => {
+    const matched = findFullEntryInDictionaries(allDictionaries, cardItem);
+    if (matched) {
+      setSelectedFullEntryModal({
+        entry: matched.entry,
+        dict: matched.dict,
+        aiCard: cardItem
+      });
+    } else {
+      // في حال لم يجد تطابقاً حرفياً في المعجم المحلي، نعرض نافذة تحتوي على بيانات البطاقة مع زر البحث في المعجم
+      setSelectedFullEntryModal({
+        entry: {
+          id: cardItem.id || 'ai_term',
+          term: cardItem.term,
+          definition: cardItem.short_meaning || 'اضغط على زر (فتح في المعجم) للبحث عن النص الكامل.',
+          letter: cardItem.term?.replace(/^ال/, '')?.charAt(0) || 'أ',
+          page: cardItem.page || 1,
+          sources: cardItem.source ? [cardItem.source] : []
+        },
+        dict:
+          allDictionaries.find((d) => d.id === cardItem.dictionaryId) || allDictionaries[0],
+        aiCard: cardItem
+      });
+    }
+  };
+
+  // حفظ التقييم الفوري في ملف ai_search_benchmarks.json
   const handleRateAiResult = (ratingType) => {
     if (!aiResult) return;
     const logItem = {
-      id: `log_${Date.now()}`,
+      id: `bench_${Date.now()}`,
       timestamp: new Date().toLocaleString('sv-SE'),
       provider: aiResult.provider,
       model: aiResult.model,
+      vectorStoreId: aiResult.vectorStoreId || DEFAULT_VECTOR_STORE_ID,
       systemPrompt: aiConfig.systemPrompt,
-      dictionaryScope: aiResult.scope,
       query: aiResult.query,
-      candidatesSent: aiResult.candidatesSent.map((c) => ({
-        id: c.id,
-        term: c.term,
-        page: c.page,
-        dictionaryId: c.dictionaryId
-      })),
-      answer: aiResult.answer,
-      tokens: aiResult.tokens,
+      results: aiResult.results,
+      inputTokens: aiResult.inputTokens,
+      outputTokens: aiResult.outputTokens,
+      totalTokens: aiResult.totalTokens,
       responseTimeSec: aiResult.responseTimeSec,
-      rating: ratingType === 'good' ? 'جيد' : 'سيء',
-      note: feedbackNote.trim()
+      rating: ratingType === 'good' ? 'جيد' : 'سيء'
     };
 
     const nextLogs = [logItem, ...benchmarkLogs];
     persistBenchmarkLogs(nextLogs);
     setFeedbackGiven(ratingType);
-    showToast(`تم حفظ التقييم (${logItem.rating}) في ai_benchmark_logs.json`);
+    showToast(`تم حفظ التقييم (${logItem.rating}) في ai_search_benchmarks.json`);
   };
 
   const handleExportBenchmarkLogs = (format = 'json') => {
     if (benchmarkLogs.length === 0) {
-      showToast('لا توجد سجلات تقييم محفوظة بعد');
+      showToast('لا توجد تجارب محفوظة بعد للتصدير');
       return;
     }
     const isCsv = format === 'csv';
     const content = isCsv ? convertLogsToCsv(benchmarkLogs) : JSON.stringify(benchmarkLogs, null, 2);
-    const filename = isCsv ? 'ai_benchmark_logs.csv' : 'ai_benchmark_logs.json';
+    const filename = isCsv ? 'ai_search_benchmarks.csv' : 'ai_search_benchmarks.json';
 
     if (window.AndroidShare && typeof window.AndroidShare.share === 'function') {
       window.AndroidShare.saveBenchmarkFiles(
@@ -370,7 +408,7 @@ export default function App() {
         const parsed = JSON.parse(ev.target.result);
         const imported = Array.isArray(parsed) ? parsed : parsed.logs || [];
         if (!imported.length) {
-          showToast('الملف لا يحتوي على سجلات صالحة');
+          showToast('الملف لا يحتوي على تجارب صالحة');
           return;
         }
         const merged = [...imported, ...benchmarkLogs];
@@ -385,7 +423,7 @@ export default function App() {
     e.target.value = '';
   };
 
-  // حالة التصفح الرئيسية
+  // حالة التصفح الرئيسية للمعجم
   const [activeTab, setActiveTab] = useState('home');
   const [selectedDictId, setSelectedDictId] = useState('fiqhi_main');
   const [selectedLetter, setSelectedLetter] = useState('الكل');
@@ -428,32 +466,46 @@ export default function App() {
     });
   }, []);
 
-  const handleCopy = useCallback(async (entry, e) => {
-    if (e) e.stopPropagation();
-    const formatted = `📘 ${entry.term}\n\n${entry.definition}\n\n— (${currentDict.category} - تطبيق المعجم)`;
-    try {
-      await navigator.clipboard.writeText(formatted);
-      showToast(`تم نسخ "${entry.term}"`);
-    } catch {
-      const textarea = document.createElement('textarea');
-      textarea.value = formatted;
-      document.body.appendChild(textarea);
-      textarea.select();
-      document.execCommand('copy');
-      document.body.removeChild(textarea);
-      showToast(`تم نسخ "${entry.term}"`);
-    }
-  }, [currentDict, showToast]);
+  const handleCopy = useCallback(
+    async (entry, dictCategory, e) => {
+      if (e) e.stopPropagation();
+      const cat = dictCategory || currentDict.category;
+      const formatted = `📘 ${entry.term}\n\n${entry.definition}\n\n— (${cat} - ص ${entry.page || 1} - تطبيق المعجم)`;
+      try {
+        await navigator.clipboard.writeText(formatted);
+        showToast(`تم نسخ "${entry.term}"`);
+      } catch {
+        const textarea = document.createElement('textarea');
+        textarea.value = formatted;
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textarea);
+        showToast(`تم نسخ "${entry.term}"`);
+      }
+    },
+    [currentDict, showToast]
+  );
 
-  const jumpToTerm = useCallback((refTerm, e) => {
-    if (e) e.stopPropagation();
-    const cleaned = refTerm.replace(/[«»"()]/g, '').trim();
-    setSelectedLetter('الكل');
-    setActiveTab('dictionary');
-    setSearchQuery(cleaned);
-    setAiSheetOpen(false);
-    showToast(`عرض: ${cleaned}`);
-  }, [showToast]);
+  const jumpToTerm = useCallback(
+    (refTerm, dictId, entryId, e) => {
+      if (e) e.stopPropagation();
+      const cleaned = refTerm.replace(/[«»"()]/g, '').trim();
+      if (dictId && allDictionaries.some((d) => d.id === dictId)) {
+        setSelectedDictId(dictId);
+      }
+      setSelectedLetter('الكل');
+      setActiveTab('dictionary');
+      setSearchQuery(cleaned);
+      if (entryId) {
+        setExpandedIds((prev) => new Set([...prev, entryId]));
+      }
+      setSelectedFullEntryModal(null);
+      setAiSheetOpen(false);
+      showToast(`عرض: ${cleaned}`);
+    },
+    [allDictionaries, showToast]
+  );
 
   const stats = useMemo(() => computeBenchmarkStats(benchmarkLogs), [benchmarkLogs]);
   const activeProviderObj = AI_PROVIDERS.find((p) => p.id === aiConfig.provider) || AI_PROVIDERS[0];
@@ -508,7 +560,7 @@ export default function App() {
                     </h2>
                     {!isExpanded && (
                       <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                        باب {entry.letter}
+                        باب {entry.letter} • ص {entry.page}
                       </p>
                     )}
                   </div>
@@ -550,12 +602,12 @@ export default function App() {
 
                   <div className="flex flex-wrap items-center gap-2 mt-3 mb-4">
                     <span className="text-xs font-bold px-3 py-1 rounded-xl bg-teal-100/80 dark:bg-teal-950/80 text-teal-800 dark:text-teal-300">
-                      باب حرف {entry.letter}
+                      باب حرف {entry.letter} (ص {entry.page})
                     </span>
 
                     {refMatch && (
                       <button
-                        onClick={(e) => jumpToTerm(refMatch[1], e)}
+                        onClick={(e) => jumpToTerm(refMatch[1], currentDict.id, null, e)}
                         className="text-xs font-bold px-3 py-1 rounded-xl bg-amber-100 dark:bg-amber-950/70 text-amber-800 dark:text-amber-300 flex items-center gap-1"
                       >
                         <ArrowUpRight className="w-3.5 h-3.5" />
@@ -565,7 +617,7 @@ export default function App() {
                   </div>
 
                   <button
-                    onClick={(e) => handleCopy(entry, e)}
+                    onClick={(e) => handleCopy(entry, currentDict.category, e)}
                     className="w-full flex items-center justify-center gap-2 py-3.5 rounded-2xl bg-teal-600 hover:bg-teal-700 active:scale-95 text-white text-sm font-extrabold shadow-md transition"
                   >
                     <Copy className="w-4 h-4" />
@@ -592,7 +644,7 @@ export default function App() {
   return (
     <div className="min-h-screen flex flex-col bg-slate-100 dark:bg-slate-950 text-slate-900 dark:text-slate-100 transition-colors duration-200 select-none">
       {toastMsg && (
-        <div className="fixed top-5 left-1/2 -translate-x-1/2 z-50 bg-teal-700 text-white px-6 py-3 rounded-full shadow-2xl flex items-center gap-2 text-sm font-bold">
+        <div className="fixed top-5 left-1/2 -translate-x-1/2 z-[80] bg-teal-700 text-white px-6 py-3 rounded-full shadow-2xl flex items-center gap-2 text-sm font-bold">
           <Check className="w-4 h-4 shrink-0" />
           <span>{toastMsg}</span>
         </div>
@@ -665,9 +717,7 @@ export default function App() {
           <div className="space-y-4">
             <div className="rounded-3xl bg-gradient-to-br from-teal-800 via-teal-700 to-emerald-800 dark:from-slate-900 dark:to-teal-950 text-white p-6 shadow-xl border border-teal-600/30 text-center space-y-1.5">
               <h1 className="text-3xl font-extrabold">المعجم</h1>
-              <p className="text-sm text-teal-100/90 font-medium">
-                {currentDict.title}
-              </p>
+              <p className="text-sm text-teal-100/90 font-medium">{currentDict.title}</p>
             </div>
 
             <div className="space-y-3">
@@ -685,12 +735,8 @@ export default function App() {
                     <span className="inline-block px-3 py-1 rounded-xl bg-teal-50 dark:bg-teal-950/70 text-teal-700 dark:text-teal-300 text-xs font-extrabold">
                       {dict.category}
                     </span>
-                    <h3 className="text-xl font-extrabold text-slate-900 dark:text-white">
-                      {dict.title}
-                    </h3>
-                    <p className="text-sm text-slate-500 dark:text-slate-400 font-bold">
-                      {dict.author}
-                    </p>
+                    <h3 className="text-xl font-extrabold text-slate-900 dark:text-white">{dict.title}</h3>
+                    <p className="text-sm text-slate-500 dark:text-slate-400 font-bold">{dict.author}</p>
                   </div>
                   <div className="w-12 h-12 rounded-2xl bg-teal-600 text-white flex items-center justify-center font-extrabold text-lg shrink-0 shadow-md">
                     ←
@@ -743,14 +789,12 @@ export default function App() {
           </div>
         )}
 
-        {/* ٤. شاشة الإعدادات (تضم: المظهر والخط + إعدادات الذكاء الاصطناعي والمقارنة + بطاقة الكتاب والمؤلف) */}
+        {/* ٤. شاشة الإعدادات */}
         {activeTab === 'about' && (
-          <div className="space-y-4">
+          <div className="space-y-4 select-text">
             {/* أ. إعدادات المظهر والخط */}
             <div className="bg-white dark:bg-slate-900 rounded-3xl p-6 border border-slate-200 dark:border-slate-800 shadow-sm space-y-5">
-              <h3 className="text-xl font-extrabold text-slate-900 dark:text-white">
-                إعدادات المظهر والخط
-              </h3>
+              <h3 className="text-xl font-extrabold text-slate-900 dark:text-white">إعدادات المظهر والخط</h3>
 
               <div className="grid grid-cols-2 gap-3">
                 <button
@@ -808,24 +852,29 @@ export default function App() {
               </div>
             </div>
 
-            {/* ب. قسم إعدادات الذكاء الاصطناعي (AI Settings) والمقارنة */}
+            {/* ب. شاشة إعدادات الذكاء الاصطناعي (AI Settings - OpenAI Responses API & Vector Store) */}
             <div className="bg-white dark:bg-slate-900 rounded-3xl p-6 border-2 border-teal-500/40 dark:border-teal-500/30 shadow-md space-y-4">
               <div className="flex items-center gap-2.5 border-b border-slate-100 dark:border-slate-800 pb-3">
                 <Sparkles className="w-6 h-6 text-teal-600 dark:text-teal-400" />
-                <h3 className="text-xl font-extrabold text-slate-900 dark:text-white">
-                  إعدادات الذكاء الاصطناعي (AI Settings)
-                </h3>
+                <div>
+                  <h3 className="text-xl font-extrabold text-slate-900 dark:text-white">
+                    إعدادات الذكاء الاصطناعي (AI Settings)
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 font-bold">
+                    OpenAI Responses API + File Search (Cloud Vector Store RAG)
+                  </p>
+                </div>
               </div>
 
-              {/* 1. اختيار المزود (Provider) */}
+              {/* 1. اختيار المزود (OpenAI افتراضياً مع دعم التبديل للتجربة) */}
               <div>
                 <label className="block text-sm font-extrabold text-slate-700 dark:text-slate-300 mb-1.5">
-                  المزود (Provider):
+                  مزود الذكاء الاصطناعي (Provider):
                 </label>
                 <select
                   value={aiConfig.provider}
                   onChange={(e) => updateAiConfig({ provider: e.target.value })}
-                  className="w-full px-4 py-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 font-bold text-base focus:outline-none focus:ring-2 focus:ring-teal-500"
+                  className="w-full px-4 py-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 font-bold text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
                 >
                   {AI_PROVIDERS.map((p) => (
                     <option key={p.id} value={p.id}>
@@ -835,24 +884,31 @@ export default function App() {
                 </select>
               </div>
 
-              {/* رابط مخصص في حال اختيار Custom URL */}
-              {aiConfig.provider === 'custom' && (
-                <div>
-                  <label className="block text-sm font-extrabold text-slate-700 dark:text-slate-300 mb-1.5">
-                    رابط الـ API المخصص (OpenAI-Compatible Endpoint):
-                  </label>
-                  <input
-                    type="text"
-                    dir="ltr"
-                    value={aiConfig.customUrl}
-                    onChange={(e) => updateAiConfig({ customUrl: e.target.value })}
-                    placeholder="https://api.example.com/v1/chat/completions"
-                    className="w-full px-4 py-3 rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-sm font-mono"
-                  />
-                </div>
-              )}
+              {/* 2. حقل API Key */}
+              <div>
+                <label className="block text-sm font-extrabold text-slate-700 dark:text-slate-300 mb-1.5 flex items-center gap-1.5">
+                  <KeyRound className="w-4 h-4 text-amber-500" />
+                  <span>مفتاح API Key الخاص بـ ({activeProviderObj.name}):</span>
+                </label>
+                <input
+                  type="password"
+                  dir="ltr"
+                  value={aiConfig.apiKeysByProvider[aiConfig.provider] || ''}
+                  onChange={(e) =>
+                    updateAiConfig((prev) => ({
+                      ...prev,
+                      apiKeysByProvider: {
+                        ...prev.apiKeysByProvider,
+                        [prev.provider]: e.target.value
+                      }
+                    }))
+                  }
+                  placeholder="sk-proj-..."
+                  className="w-full px-4 py-3 rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
+                />
+              </div>
 
-              {/* 2. اسم النموذج يدوياً أو من مقترحات */}
+              {/* 3. حقل اسم النموذج (Model Name): القيمة الافتراضية gpt-4o-mini مع مقترحات gpt-4o, o3-mini */}
               <div>
                 <label className="block text-sm font-extrabold text-slate-700 dark:text-slate-300 mb-1.5 flex items-center gap-1.5">
                   <Cpu className="w-4 h-4 text-teal-600" />
@@ -871,7 +927,7 @@ export default function App() {
                       }
                     }))
                   }
-                  placeholder={activeProviderObj.defaultModel}
+                  placeholder="gpt-4o-mini"
                   className="w-full px-4 py-3 rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 font-mono text-sm font-bold focus:outline-none focus:ring-2 focus:ring-teal-500"
                 />
                 <div className="flex flex-wrap gap-1.5 mt-2" dir="ltr">
@@ -885,7 +941,7 @@ export default function App() {
                           modelsByProvider: { ...prev.modelsByProvider, [prev.provider]: m }
                         }))
                       }
-                      className={`px-2.5 py-1 rounded-xl text-xs font-mono font-bold border transition ${
+                      className={`px-3 py-1 rounded-xl text-xs font-mono font-bold border transition ${
                         aiConfig.modelsByProvider[aiConfig.provider] === m
                           ? 'bg-teal-600 text-white border-teal-600'
                           : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-300 dark:border-slate-700'
@@ -897,121 +953,138 @@ export default function App() {
                 </div>
               </div>
 
-              {/* 3. مفتاح الـ API المحفوظ لكل مزود على حدة */}
-              <div>
-                <label className="block text-sm font-extrabold text-slate-700 dark:text-slate-300 mb-1.5 flex items-center gap-1.5">
-                  <KeyRound className="w-4 h-4 text-amber-500" />
-                  <span>مفتاح الـ API لـ ({activeProviderObj.name}) - يُحفظ تلقائياً:</span>
+              {/* 4. حقل معرف مخزن المتجهات (Vector Store ID) */}
+              <div className="space-y-2 pt-1">
+                <label className="block text-sm font-extrabold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                  <Database className="w-4 h-4 text-teal-600" />
+                  <span>معرف مخزن المتجهات الأساسي (Vector Store ID):</span>
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    dir="ltr"
+                    value={aiConfig.vectorStoreId}
+                    onChange={(e) => updateAiConfig({ vectorStoreId: e.target.value })}
+                    placeholder={DEFAULT_VECTOR_STORE_ID}
+                    className="flex-1 px-3.5 py-3 rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 font-mono text-xs font-bold focus:outline-none focus:ring-2 focus:ring-teal-500"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      updateAiConfig({ vectorStoreId: DEFAULT_VECTOR_STORE_ID });
+                      showToast('تمت استعادة معرف الـ Vector Store الافتراضي');
+                    }}
+                    className="px-3 py-2 rounded-2xl bg-teal-50 dark:bg-slate-800 text-teal-700 dark:text-teal-300 border border-teal-200 dark:border-slate-700 text-xs font-extrabold shrink-0"
+                  >
+                    الافتراضي
+                  </button>
+                </div>
+
+                <label className="block text-xs font-extrabold text-slate-500 dark:text-slate-400 pt-1">
+                  معرفات Vector Store إضافية للأصولي واللغوي (اختياري - افصل بفاصلة):
                 </label>
                 <input
-                  type="password"
+                  type="text"
                   dir="ltr"
-                  value={aiConfig.apiKeysByProvider[aiConfig.provider] || ''}
-                  onChange={(e) =>
-                    updateAiConfig((prev) => ({
-                      ...prev,
-                      apiKeysByProvider: {
-                        ...prev.apiKeysByProvider,
-                        [prev.provider]: e.target.value
-                      }
-                    }))
-                  }
-                  placeholder="أدخل مفتاح الـ API هنا..."
-                  className="w-full px-4 py-3 rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
+                  value={aiConfig.extraVectorStoreIds || ''}
+                  onChange={(e) => updateAiConfig({ extraVectorStoreIds: e.target.value })}
+                  placeholder="vs_xxx, vs_yyy"
+                  className="w-full px-3.5 py-2.5 rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 font-mono text-xs"
                 />
               </div>
 
-              {/* 4. عدد المقترحات المرسلة للنموذج لتوفير التوكنات */}
+              {/* 5. حقل رقمي لتحديد الحد الأقصى لنتائج البحث السحابي (max_num_results): الافتراضي 5 */}
               <div>
                 <div className="flex items-center justify-between mb-1.5">
                   <label className="text-sm font-extrabold text-slate-700 dark:text-slate-300">
-                    عدد مقترحات المعجم المرسلة في كل بحث:
+                    الحد الأقصى لنتائج البحث السحابي (max_num_results):
                   </label>
-                  <span className="px-3 py-1 rounded-xl bg-teal-100 dark:bg-teal-950 text-teal-800 dark:text-teal-300 font-extrabold text-sm">
-                    {aiConfig.maxCandidates} كلمات
-                  </span>
+                  <input
+                    type="number"
+                    min="1"
+                    max="15"
+                    dir="ltr"
+                    value={aiConfig.maxNumResults}
+                    onChange={(e) =>
+                      updateAiConfig({ maxNumResults: Math.max(1, Math.min(15, Number(e.target.value) || 5)) })
+                    }
+                    className="w-20 px-3 py-1.5 rounded-xl bg-teal-50 dark:bg-slate-800 border border-teal-300 dark:border-slate-700 text-center font-mono font-extrabold text-base text-teal-800 dark:text-teal-300"
+                  />
                 </div>
-                <input
-                  type="range"
-                  min="3"
-                  max="10"
-                  value={aiConfig.maxCandidates}
-                  onChange={(e) => updateAiConfig({ maxCandidates: Number(e.target.value) })}
-                  className="w-full accent-teal-600 h-2 bg-slate-200 rounded-lg cursor-pointer"
-                />
-                <div className="flex justify-between text-xs text-slate-400 mt-1">
-                  <span>3 (أعلى توفير للتوكنات)</span>
-                  <span>6 (الافتراضي المتوازن)</span>
-                  <span>10 (تغطية أوسع)</span>
-                </div>
+                <p className="text-xs text-slate-400">
+                  القيمة الافتراضية 5 لتقليل استهلاك التوكنات مع دقة استرجاع عالية من الـ Vector Store.
+                </p>
               </div>
 
-              {/* 5. الرسالة التوجيهية (System Prompt) */}
+              {/* 6. حقل نصي لتعديل برومبت النظام (System Instructions) مع زر استعادة البرومبت الافتراضي */}
               <div>
                 <div className="flex items-center justify-between mb-1.5">
                   <label className="text-sm font-extrabold text-slate-700 dark:text-slate-300">
-                    الرسالة التوجيهية (System Prompt):
+                    برومبت النظام المقيد (System Instructions):
                   </label>
                   <button
                     type="button"
                     onClick={() => {
                       updateAiConfig({ systemPrompt: DEFAULT_SYSTEM_PROMPT });
-                      showToast('تمت استعادة الرسالة الافتراضية');
+                      showToast('تمت استعادة البرومبت الافتراضي');
                     }}
                     className="flex items-center gap-1 text-xs font-extrabold text-teal-700 dark:text-teal-400 bg-teal-50 dark:bg-slate-800 px-2.5 py-1.5 rounded-xl border border-teal-200 dark:border-slate-700"
                   >
                     <RotateCcw className="w-3.5 h-3.5" />
-                    <span>استعادة الرسالة الافتراضية</span>
+                    <span>استعادة البرومبت الافتراضي</span>
                   </button>
                 </div>
                 <textarea
-                  rows="6"
+                  rows="7"
                   value={aiConfig.systemPrompt}
                   onChange={(e) => updateAiConfig({ systemPrompt: e.target.value })}
-                  className="w-full p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-sm leading-relaxed focus:outline-none focus:ring-2 focus:ring-teal-500"
+                  className="w-full p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-xs sm:text-sm leading-relaxed focus:outline-none focus:ring-2 focus:ring-teal-500"
                 />
               </div>
 
-              {/* 6. الأزرار الثلاثة الخاصة بملف التقييم والمقارنة */}
+              {/* 7. الأزرار الـ 3 لإدارة ملف التجارب (ai_search_benchmarks.json) */}
               <div className="pt-3 border-t border-slate-100 dark:border-slate-800 space-y-2.5">
                 <div className="text-sm font-extrabold text-slate-800 dark:text-slate-200">
-                  سجل التجارب ومقارنة النماذج ({benchmarkLogs.length} تجربة مسجلة):
+                  إدارة ملف التجارب `ai_search_benchmarks.json` ({benchmarkLogs.length} تجربة):
                 </div>
 
+                {/* زر 1: تصدير ومشاركة الملف (Export JSON / CSV) */}
+                <div className="grid grid-cols-2 gap-2.5">
+                  <button
+                    type="button"
+                    onClick={() => handleExportBenchmarkLogs('json')}
+                    className="py-3.5 px-3 rounded-2xl bg-slate-800 dark:bg-slate-700 text-white font-extrabold text-xs flex items-center justify-center gap-1.5 shadow-sm"
+                  >
+                    <Download className="w-4 h-4" />
+                    <span>١. تصدير ومشاركة JSON</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => handleExportBenchmarkLogs('csv')}
+                    className="py-3.5 px-3 rounded-2xl bg-emerald-700 text-white font-extrabold text-xs flex items-center justify-center gap-1.5 shadow-sm"
+                  >
+                    <Download className="w-4 h-4" />
+                    <span>تصدير ومشاركة CSV</span>
+                  </button>
+                </div>
+
+                {/* زر 2: استيراد ملف تجارب (Import JSON) */}
+                <label className="w-full py-3.5 px-4 rounded-2xl bg-amber-500/15 dark:bg-amber-500/10 text-amber-800 dark:text-amber-300 border border-amber-400/40 font-extrabold text-xs flex items-center justify-center gap-2 cursor-pointer">
+                  <Upload className="w-4 h-4" />
+                  <span>٢. استيراد ملف تجارب (Import JSON)</span>
+                  <input type="file" accept=".json" onChange={handleImportBenchmarkLogs} className="hidden" />
+                </label>
+
+                {/* زر 3: ملخص أداء النماذج */}
                 <button
                   type="button"
                   onClick={() => setShowStatsModal(true)}
                   className="w-full py-3.5 px-4 rounded-2xl bg-teal-600 hover:bg-teal-700 text-white font-extrabold text-sm flex items-center justify-center gap-2 shadow-md transition"
                 >
                   <BarChart3 className="w-5 h-5" />
-                  <span>١. إحصائيات ومقارنة النماذج</span>
+                  <span>٣. ملخص أداء النماذج</span>
                 </button>
-
-                <div className="grid grid-cols-2 gap-2.5">
-                  <button
-                    type="button"
-                    onClick={() => handleExportBenchmarkLogs('json')}
-                    className="py-3 px-3 rounded-2xl bg-slate-800 dark:bg-slate-700 text-white font-extrabold text-xs flex items-center justify-center gap-1.5 shadow-sm"
-                  >
-                    <Download className="w-4 h-4" />
-                    <span>٢. تصدير JSON</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => handleExportBenchmarkLogs('csv')}
-                    className="py-3 px-3 rounded-2xl bg-emerald-700 text-white font-extrabold text-xs flex items-center justify-center gap-1.5 shadow-sm"
-                  >
-                    <Download className="w-4 h-4" />
-                    <span>تصدير CSV</span>
-                  </button>
-                </div>
-
-                <label className="w-full py-3 px-4 rounded-2xl bg-amber-500/15 dark:bg-amber-500/10 text-amber-800 dark:text-amber-300 border border-amber-400/40 font-extrabold text-xs flex items-center justify-center gap-2 cursor-pointer">
-                  <Upload className="w-4 h-4" />
-                  <span>٣. استيراد ملف تجارب (Import JSON)</span>
-                  <input type="file" accept=".json" onChange={handleImportBenchmarkLogs} className="hidden" />
-                </label>
               </div>
             </div>
 
@@ -1032,7 +1105,9 @@ export default function App() {
                 </div>
                 <div>
                   <span className="font-extrabold text-teal-700 dark:text-teal-400">الناشر: </span>
-                  <span className="font-bold">دار البلاغة للطباعة والنشر والتوزيع (بيروت) / مؤسسة النشر الإسلامي التابعة لجماعة المدرسين بقم المشرفة</span>
+                  <span className="font-bold">
+                    دار البلاغة للطباعة والنشر والتوزيع (بيروت) / مؤسسة النشر الإسلامي التابعة لجماعة المدرسين بقم المشرفة
+                  </span>
                 </div>
                 <div>
                   <span className="font-extrabold text-teal-700 dark:text-teal-400">الطبعة: </span>
@@ -1041,7 +1116,9 @@ export default function App() {
               </div>
 
               <div className="pt-3 border-t border-slate-100 dark:border-slate-800 space-y-3 font-serif text-base leading-relaxed text-slate-700 dark:text-slate-300">
-                <p className="font-bold text-slate-900 dark:text-white">من مقدمة المؤلف الشيخ ياسين حسن عيسى العاملي:</p>
+                <p className="font-bold text-slate-900 dark:text-white">
+                  من مقدمة المؤلف الشيخ ياسين حسن عيسى العاملي:
+                </p>
                 <p>
                   «فهذا كتيب ذكرت فيه أكثر من ألف كلمة تحتوي على أغلب ما يحتاجه المتعلم والمبلغ لفهم عبائر العلماء الأجلاء الواردة في رسائلهم العملية. وقد رتبته على الأحرف الأبجدية وراعيت الحرف الأول والثاني من الكلمة بما هي واردة في لسان العلماء، ولم أنظر إلى الاشتقاقات اللغوية لأن هذا بنظري أسهل أخذاً وتناولاً».
                 </p>
@@ -1051,27 +1128,27 @@ export default function App() {
         )}
       </main>
 
-      {/* الزر العائم للبحث الذكي بالذكاء الاصطناعي (Floating Action Button - FAB) */}
+      {/* الزر العائم للبحث الدلالي بالذكاء الاصطناعي (FAB) */}
       <button
         onClick={() => setAiSheetOpen(true)}
         className="fixed bottom-28 left-4 z-40 flex items-center gap-2 px-5 py-4 rounded-full bg-gradient-to-r from-teal-600 to-emerald-600 text-white font-extrabold text-sm shadow-2xl border-2 border-white/30 active:scale-95 transition"
       >
         <Sparkles className="w-5 h-5 text-amber-300" />
-        <span>البحث الذكي AI</span>
+        <span>البحث الدلالي AI</span>
       </button>
 
-      {/* القائمة العائمة للبحث الذكي بالذكاء الاصطناعي (Floating AI Search Sheet) */}
+      {/* واجهة البحث العائمة (Floating AI Search BottomSheet) */}
       {aiSheetOpen && (
         <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
-          <div className="bg-white dark:bg-slate-900 w-full max-w-lg max-h-[90vh] rounded-t-3xl sm:rounded-3xl shadow-2xl border border-slate-200 dark:border-slate-800 flex flex-col overflow-hidden">
+          <div className="bg-white dark:bg-slate-900 w-full max-w-lg max-h-[92vh] rounded-t-3xl sm:rounded-3xl shadow-2xl border border-slate-200 dark:border-slate-800 flex flex-col overflow-hidden">
             {/* هيدر النافذة العائمة */}
             <div className="p-4 bg-gradient-to-l from-teal-800 to-emerald-800 text-white flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <Sparkles className="w-5 h-5 text-amber-300" />
                 <div>
-                  <h3 className="text-base font-extrabold">البحث الذكي بالذكاء الاصطناعي (RAG)</h3>
-                  <p className="text-[11px] text-teal-100">
-                    {activeProviderObj.name} • {aiConfig.modelsByProvider[aiConfig.provider]}
+                  <h3 className="text-base font-extrabold">البحث الدلالي السحابي (OpenAI File Search)</h3>
+                  <p className="text-[11px] text-teal-100 font-mono">
+                    {aiConfig.modelsByProvider[aiConfig.provider]} • {aiConfig.vectorStoreId.slice(0, 18)}...
                   </p>
                 </div>
               </div>
@@ -1083,25 +1160,24 @@ export default function App() {
               </button>
             </div>
 
-            {/* محتوى النافذة العائمة القابل للتمرير */}
+            {/* محتوى النافذة العائمة */}
             <div className="p-4 overflow-y-auto space-y-4 flex-1 select-text">
-              {/* أ) شريط فلاتر علوي سريع (Chips) لتحديد نطاق البحث */}
+              {/* شريط فلاتر علوي (الكل، الفقهي، الأصولي، اللغوي) */}
               <div>
                 <div className="text-xs font-extrabold text-slate-500 dark:text-slate-400 mb-2">
-                  نطاق البحث في المعاجم:
+                  نطاق البحث في المعجم:
                 </div>
-                <div className="flex flex-wrap gap-1.5">
+                <div className="grid grid-cols-4 gap-1.5">
                   {[
-                    { id: 'auto', label: '✨ تحديد تلقائي ذكي' },
                     { id: 'all', label: 'الكل' },
-                    { id: 'fiqhi_main', label: 'المعجم الفقهي' },
-                    { id: 'usuli_dict', label: 'المعجم الأصولي' },
-                    { id: 'lughawi_dict', label: 'المعجم اللغوي' }
+                    { id: 'fiqhi_main', label: 'الفقهي' },
+                    { id: 'usuli_dict', label: 'الأصولي' },
+                    { id: 'lughawi_dict', label: 'اللغوي' }
                   ].map((chip) => (
                     <button
                       key={chip.id}
                       onClick={() => setAiScope(chip.id)}
-                      className={`px-3 py-1.5 rounded-xl text-xs font-extrabold transition ${
+                      className={`py-2 px-2 rounded-xl text-xs font-extrabold transition ${
                         aiScope === chip.id
                           ? 'bg-teal-600 text-white shadow-sm'
                           : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300'
@@ -1113,69 +1189,15 @@ export default function App() {
                 </div>
               </div>
 
-              {/* ب) حقل إدخال السؤال أو المعنى المراد البحث عنه */}
-              <div className="space-y-2">
+              {/* مربع إدخال السؤال وزر البحث */}
+              <div className="space-y-2.5">
                 <textarea
                   rows="2"
                   value={aiQuery}
                   onChange={(e) => setAiQuery(e.target.value)}
-                  placeholder="اكتب سؤالك أو المعنى بالعامية أو الفصحى (مثال: ما هو الإثمد؟ أو حكم الشك بعد الفراغ)..."
+                  placeholder="اكتب سؤالك باللهجة العامية العراقية أو الفصحى (مثلاً: شنو يعني الصعيد الطيب؟ أو حكم الشك بعد الفراغ)..."
                   className="w-full p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-base font-bold focus:outline-none focus:ring-2 focus:ring-teal-500"
                 />
-
-                {/* ج) المقترحات المستخرجة محلياً (Local Hybrid Retrieval) مع فك إحالات "راجع" لتوفير التوكنات */}
-                <div className="p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-800 space-y-2">
-                  <div className="flex items-center justify-between text-xs font-extrabold text-slate-600 dark:text-slate-300">
-                    <span>
-                      المقترحات المبدئية المرسلة للنموذج ({aiCandidates.length} كلمات - موفرة للتوكنات):
-                    </span>
-                  </div>
-
-                  {aiCandidates.length === 0 ? (
-                    <p className="text-xs text-slate-400">
-                      اكتب سؤالك بالأعلى لاستخراج أقرب المصطلحات محلياً قبل إرسالها للنموذج...
-                    </p>
-                  ) : (
-                    <div className="flex flex-wrap gap-1.5">
-                      {aiCandidates.map((cand) => (
-                        <span
-                          key={cand.id}
-                          className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl bg-white dark:bg-slate-900 border border-teal-500/40 text-xs font-extrabold text-teal-800 dark:text-teal-300"
-                        >
-                          <span>{cand.term}</span>
-                          <button
-                            onClick={() =>
-                              setAiCandidates((prev) => prev.filter((item) => item.id !== cand.id))
-                            }
-                            className="text-rose-500 hover:text-rose-700 font-bold"
-                            title="حذف من المقترحات"
-                          >
-                            ✕
-                          </button>
-                        </span>
-                      ))}
-                    </div>
-                  )}
-
-                  {/* إضافة كلمة يدوياً إلى المقترحات قبل الإرسال */}
-                  <div className="flex items-center gap-2 pt-1">
-                    <input
-                      type="text"
-                      value={manualTermInput}
-                      onChange={(e) => setManualTermInput(e.target.value)}
-                      placeholder="إضافة مصطلح آخر للمقترحات..."
-                      className="flex-1 px-3 py-1.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs font-bold"
-                    />
-                    <button
-                      type="button"
-                      onClick={handleAddManualCandidate}
-                      className="px-3 py-1.5 rounded-xl bg-teal-600 text-white text-xs font-extrabold flex items-center gap-1"
-                    >
-                      <Plus className="w-3.5 h-3.5" />
-                      <span>إضافة</span>
-                    </button>
-                  </div>
-                </div>
 
                 <button
                   type="button"
@@ -1183,82 +1205,127 @@ export default function App() {
                   onClick={handleRunAiSearch}
                   className="w-full py-3.5 rounded-2xl bg-teal-600 hover:bg-teal-700 disabled:opacity-50 text-white font-extrabold text-base shadow-md transition flex items-center justify-center gap-2"
                 >
-                  <Sparkles className="w-5 h-5" />
-                  <span>{aiLoading ? 'جاري التحليل والإجابة...' : 'إرسال للنموذج والبحث الذكي'}</span>
+                  <Search className="w-5 h-5" />
+                  <span>{aiLoading ? 'جاري البحث في المعجم...' : 'بحث دلالي في المعجم'}</span>
                 </button>
               </div>
 
-              {/* رسالة الخطأ إن وجدت */}
+              {/* مؤشر التحميل */}
+              {aiLoading && (
+                <div className="p-6 rounded-3xl bg-teal-50/70 dark:bg-slate-800/60 border border-teal-500/30 text-center space-y-2 animate-pulse">
+                  <Sparkles className="w-8 h-8 text-teal-600 dark:text-teal-400 mx-auto animate-spin" />
+                  <p className="text-base font-extrabold text-teal-900 dark:text-teal-200">
+                    جاري البحث في المعجم...
+                  </p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    يتم الآن فحص مخزن المتجهات ({aiConfig.vectorStoreId}) واستخراج المصطلحات المطابقة
+                  </p>
+                </div>
+              )}
+
+              {/* عرض الخطأ إن وجد */}
               {aiError && (
                 <div className="p-4 rounded-2xl bg-rose-50 dark:bg-rose-950/50 border border-rose-300 dark:border-rose-800 text-rose-700 dark:text-rose-300 text-sm font-bold">
                   ⚠️ {aiError}
                 </div>
               )}
 
-              {/* هـ) عرض إجابة النموذج + شريط المعلومات + الكلمات المرشحة + التقييم (جيد / سيء) */}
-              {aiResult && (
-                <div className="p-4 rounded-3xl bg-teal-50/60 dark:bg-slate-800/90 border-2 border-teal-500/40 space-y-3">
-                  {/* شريط معلومات النموذج والزمن والتوكنات */}
-                  <div className="flex flex-wrap items-center justify-between gap-2 text-xs font-extrabold pb-2 border-b border-teal-200/60 dark:border-slate-700">
-                    <span className="px-2.5 py-1 rounded-lg bg-teal-600 text-white">
-                      🤖 {aiResult.model}
-                    </span>
-                    <span className="px-2.5 py-1 rounded-lg bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300">
-                      ⏱️ {aiResult.responseTimeSec} ثانية
-                    </span>
-                    <span className="px-2.5 py-1 rounded-lg bg-slate-200 dark:bg-slate-700 text-slate-800 dark:text-slate-200">
-                      🪙 ~{aiResult.tokens} توكن
-                    </span>
-                  </div>
-
-                  {/* نص إجابة النموذج */}
-                  <div
-                    style={{ fontSize: currentFont.defSize, lineHeight: currentFont.lineHeight }}
-                    className="font-serif whitespace-pre-wrap text-slate-900 dark:text-slate-100 bg-white dark:bg-slate-950 p-4 rounded-2xl border border-slate-200 dark:border-slate-800"
-                  >
-                    {aiResult.answer}
-                  </div>
-
-                  {/* أزرار الكلمات المرشحة لفتح تفاصيل الكلمة في المعجم */}
-                  {aiResult.candidatesSent?.length > 0 && (
-                    <div className="space-y-1.5">
-                      <div className="text-xs font-extrabold text-slate-600 dark:text-slate-300">
-                        اضغط على أي مصطلح لفتحه في المعجم:
-                      </div>
-                      <div className="flex flex-wrap gap-1.5">
-                        {aiResult.candidatesSent.map((cand) => (
-                          <button
-                            key={cand.id}
-                            onClick={(e) => jumpToTerm(cand.term, e)}
-                            className="px-3 py-1.5 rounded-xl bg-teal-600/15 hover:bg-teal-600 hover:text-white text-teal-800 dark:text-teal-300 text-xs font-extrabold transition flex items-center gap-1"
-                          >
-                            <span>📘 {cand.term}</span>
-                            <ArrowUpRight className="w-3.5 h-3.5" />
-                          </button>
-                        ))}
-                      </div>
+              {/* عرض النتائج المقترحة على شكل بطاقات أنيقة (Cards) */}
+              {aiResult && !aiLoading && (
+                <div className="space-y-3.5">
+                  {aiResult.message && (
+                    <div className="px-3.5 py-2.5 rounded-2xl bg-teal-50 dark:bg-slate-800 border border-teal-200 dark:border-slate-700 text-xs font-extrabold text-teal-800 dark:text-teal-300">
+                      💡 {aiResult.message}
                     </div>
                   )}
 
-                  {/* نظام التقييم الفوري (Feedback: جيد / سيء) */}
-                  <div className="pt-3 border-t border-teal-200/60 dark:border-slate-700 space-y-2">
-                    <div className="text-xs font-extrabold text-slate-700 dark:text-slate-300">
-                      قيّم إجابة هذا النموذج لحفظها في سجل المقارنة:
+                  {aiResult.results.length === 0 ? (
+                    <div className="p-6 rounded-3xl bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700 text-center space-y-1">
+                      <p className="text-base font-extrabold text-slate-700 dark:text-slate-200">
+                        لم يتم العثور على مصطلحات مطابقة في المعجم
+                      </p>
+                      <p className="text-xs text-slate-500">جرّب صياغة السؤال بكلمات أخرى أو أضف المصطلح يدوياً بالأسفل.</p>
                     </div>
+                  ) : (
+                    <div className="space-y-2.5">
+                      <div className="text-xs font-extrabold text-slate-500 dark:text-slate-400 flex items-center justify-between">
+                        <span>المصطلحات المقترحة ({aiResult.results.length}) - اضغط على أي بطاقة لعرض التعريف الكامل:</span>
+                      </div>
+
+                      {aiResult.results.map((item, idx) => (
+                        <div
+                          key={`${item.id || item.term}_${idx}`}
+                          onClick={() => handleOpenSuggestedCardFullView(item)}
+                          className="p-4 rounded-2xl bg-white dark:bg-slate-800/95 border-2 border-slate-200 dark:border-slate-700 hover:border-teal-500 dark:hover:border-teal-500 shadow-sm transition cursor-pointer active:scale-[0.99] space-y-2"
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <h4 className="text-lg font-extrabold text-slate-900 dark:text-white">
+                                {item.term}
+                              </h4>
+                              <span className="px-2.5 py-0.5 rounded-lg bg-teal-100 dark:bg-teal-950 text-teal-800 dark:text-teal-300 text-xs font-extrabold">
+                                {getDictionaryLabel(item.dictionaryId)} • ص {item.page || 1}
+                              </span>
+                            </div>
+
+                            <button
+                              type="button"
+                              onClick={(e) => handleRemoveSuggestedCard(idx, e)}
+                              className="p-1.5 rounded-lg text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40 shrink-0"
+                              title="حذف هذه البطاقة من المقترحات"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
+
+                          <p className="text-sm text-slate-700 dark:text-slate-200 font-bold leading-relaxed line-clamp-2">
+                            {item.short_meaning}
+                          </p>
+
+                          <div className="flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400 pt-1 border-t border-slate-100 dark:border-slate-700/60">
+                            <span>المصدر: {item.source || 'المعجم'}</span>
+                            <span className="text-teal-600 dark:text-teal-400 font-extrabold flex items-center gap-1">
+                              <span>عرض النص الكامل</span>
+                              <ArrowUpRight className="w-3.5 h-3.5" />
+                            </span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* إمكانية إضافة مصطلح لتصحيح القائمة المقترحة قبل التقييم */}
+                  <div className="flex items-center gap-2 pt-1">
                     <input
                       type="text"
-                      value={feedbackNote}
-                      onChange={(e) => setFeedbackNote(e.target.value)}
-                      placeholder="ملاحظة اختيارية على الإجابة..."
-                      className="w-full px-3 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs font-bold"
+                      value={manualTermInput}
+                      onChange={(e) => setManualTermInput(e.target.value)}
+                      placeholder="إضافة مصطلح للقائمة المقترحة قبل التقييم..."
+                      className="flex-1 px-3.5 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-bold"
                     />
+                    <button
+                      type="button"
+                      onClick={handleAddManualSuggestedCard}
+                      className="px-3.5 py-2 rounded-xl bg-teal-600 text-white text-xs font-extrabold flex items-center gap-1 shrink-0"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>إضافة</span>
+                    </button>
+                  </div>
+
+                  {/* شريط المعلومات والتقييم الفوري (اسم النموذج | عدد التوكنات | الوقت + جيد 👍 / سيء 👎) */}
+                  <div className="p-3.5 rounded-2xl bg-slate-100 dark:bg-slate-800/90 border border-slate-200 dark:border-slate-700 space-y-2.5">
+                    <div className="text-xs font-extrabold text-center text-slate-700 dark:text-slate-200 dir-rtl">
+                      ({aiResult.model} | عدد التوكنات: {aiResult.totalTokens} | الوقت: {aiResult.responseTimeSec} ثانية)
+                    </div>
+
                     <div className="grid grid-cols-2 gap-2.5">
                       <button
                         type="button"
                         onClick={() => handleRateAiResult('good')}
                         className={`py-2.5 rounded-xl font-extrabold text-sm flex items-center justify-center gap-1.5 border-2 transition ${
                           feedbackGiven === 'good'
-                            ? 'bg-emerald-600 text-white border-emerald-600'
+                            ? 'bg-emerald-600 text-white border-emerald-600 shadow-md'
                             : 'bg-white dark:bg-slate-900 text-emerald-700 dark:text-emerald-400 border-emerald-500/40'
                         }`}
                       >
@@ -1271,7 +1338,7 @@ export default function App() {
                         onClick={() => handleRateAiResult('bad')}
                         className={`py-2.5 rounded-xl font-extrabold text-sm flex items-center justify-center gap-1.5 border-2 transition ${
                           feedbackGiven === 'bad'
-                            ? 'bg-rose-600 text-white border-rose-600'
+                            ? 'bg-rose-600 text-white border-rose-600 shadow-md'
                             : 'bg-white dark:bg-slate-900 text-rose-700 dark:text-rose-400 border-rose-500/40'
                         }`}
                       >
@@ -1287,14 +1354,91 @@ export default function App() {
         </div>
       )}
 
-      {/* نافذة إحصائيات ومقارنة النماذج (Benchmarking Analytics Modal) */}
+      {/* نافذة منبثقة لعرض التعريف الكامل والأصلي من المعجم عند الضغط على أي بطاقة مقترحة */}
+      {selectedFullEntryModal && (
+        <div className="fixed inset-0 z-[60] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-slate-900 w-full max-w-lg rounded-3xl shadow-2xl border-2 border-teal-500 overflow-hidden flex flex-col max-h-[85vh]">
+            <div className="p-4 bg-gradient-to-l from-teal-800 to-emerald-800 text-white flex items-center justify-between">
+              <div>
+                <span className="text-xs font-extrabold text-amber-300">
+                  {selectedFullEntryModal.dict?.category || 'المعجم الفقهي'} • صفحة {selectedFullEntryModal.entry.page || 1}
+                </span>
+                <h3 className="text-xl font-extrabold mt-0.5">{selectedFullEntryModal.entry.term}</h3>
+              </div>
+              <button
+                onClick={() => setSelectedFullEntryModal(null)}
+                className="p-2 rounded-full bg-white/15 hover:bg-white/25 text-white"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-5 overflow-y-auto space-y-4 select-text">
+              <div
+                style={{ fontSize: currentFont.defSize, lineHeight: currentFont.lineHeight }}
+                className="font-serif text-slate-900 dark:text-slate-100 bg-slate-50 dark:bg-slate-950 p-4 rounded-2xl border border-slate-200 dark:border-slate-800"
+              >
+                {selectedFullEntryModal.entry.definition}
+              </div>
+
+              <div className="flex flex-wrap gap-2 text-xs font-extrabold">
+                <span className="px-3 py-1 rounded-xl bg-teal-100 dark:bg-teal-950 text-teal-800 dark:text-teal-300">
+                  باب حرف {selectedFullEntryModal.entry.letter}
+                </span>
+                {selectedFullEntryModal.entry.id && (
+                  <span className="px-3 py-1 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-mono">
+                    ID: {selectedFullEntryModal.entry.id}
+                  </span>
+                )}
+              </div>
+
+              <div className="grid grid-cols-2 gap-2.5 pt-2">
+                <button
+                  type="button"
+                  onClick={(e) =>
+                    handleCopy(
+                      selectedFullEntryModal.entry,
+                      selectedFullEntryModal.dict?.category,
+                      e
+                    )
+                  }
+                  className="py-3.5 rounded-2xl bg-teal-600 hover:bg-teal-700 text-white font-extrabold text-sm flex items-center justify-center gap-1.5 shadow-md"
+                >
+                  <Copy className="w-4 h-4" />
+                  <span>نسخ النص الكامل</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={(e) =>
+                    jumpToTerm(
+                      selectedFullEntryModal.entry.term,
+                      selectedFullEntryModal.dict?.id,
+                      selectedFullEntryModal.entry.id,
+                      e
+                    )
+                  }
+                  className="py-3.5 rounded-2xl bg-slate-800 dark:bg-slate-700 text-white font-extrabold text-sm flex items-center justify-center gap-1.5 shadow-md"
+                >
+                  <BookOpen className="w-4 h-4" />
+                  <span>فتح في المعجم</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* نافذة ملخص أداء النماذج (Model Performance Summary Modal) */}
       {showStatsModal && (
         <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white dark:bg-slate-900 w-full max-w-lg max-h-[85vh] rounded-3xl shadow-2xl border border-slate-200 dark:border-slate-800 flex flex-col overflow-hidden">
             <div className="p-4 bg-teal-700 text-white flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <BarChart3 className="w-5 h-5 text-amber-300" />
-                <h3 className="text-base font-extrabold">إحصائيات ومقارنة النماذج ({benchmarkLogs.length} تجربة)</h3>
+                <h3 className="text-base font-extrabold">
+                  ملخص أداء النماذج ({benchmarkLogs.length} تجربة)
+                </h3>
               </div>
               <button
                 onClick={() => setShowStatsModal(false)}
@@ -1304,33 +1448,40 @@ export default function App() {
               </button>
             </div>
 
-            <div className="p-4 overflow-y-auto space-y-4 flex-1">
+            <div className="p-4 overflow-y-auto space-y-4 flex-1 select-text">
               {stats.models.length === 0 ? (
                 <p className="text-center text-sm text-slate-500 py-8 font-bold">
-                  لم يتم تسجيل أي تقييمات بعد. جرّب البحث الذكي واضغط (جيد 👍 أو سيء 👎) لتظهر المقارنة هنا.
+                  لم يتم تسجيل أي تجارب في `ai_search_benchmarks.json` بعد. جرّب البحث الدلالي واضغط (جيد 👍 أو سيء 👎) لتظهر الإحصائيات هنا.
                 </p>
               ) : (
                 <>
-                  {/* ملخص الأفضل */}
                   <div className="grid grid-cols-1 gap-2">
                     {stats.bestAccuracyModel && (
                       <div className="p-3 rounded-2xl bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-300 dark:border-emerald-800 text-xs font-extrabold">
-                        🏆 أعلى نسبة تقييم «جيد»: <span className="text-emerald-700 dark:text-emerald-300">{stats.bestAccuracyModel.model} ({stats.bestAccuracyModel.goodRate}%)</span>
+                        🏆 أعلى نسبة تقييم جيد:{' '}
+                        <span className="text-emerald-700 dark:text-emerald-300">
+                          {stats.bestAccuracyModel.model} ({stats.bestAccuracyModel.goodRate}%)
+                        </span>
                       </div>
                     )}
                     {stats.fastestModel && (
                       <div className="p-3 rounded-2xl bg-amber-50 dark:bg-amber-950/50 border border-amber-300 dark:border-amber-800 text-xs font-extrabold">
-                        ⚡ أسرع وقت استجابة: <span className="text-amber-700 dark:text-amber-300">{stats.fastestModel.model} ({stats.fastestModel.avgTimeSec} ثانية)</span>
+                        ⚡ أسرع متوسط استجابة:{' '}
+                        <span className="text-amber-700 dark:text-amber-300">
+                          {stats.fastestModel.model} ({stats.fastestModel.avgTimeSec} ثانية)
+                        </span>
                       </div>
                     )}
                     {stats.lowestTokensModel && (
                       <div className="p-3 rounded-2xl bg-teal-50 dark:bg-teal-950/50 border border-teal-300 dark:border-teal-800 text-xs font-extrabold">
-                        🪙 أقل استهلاك للتوكنات: <span className="text-teal-700 dark:text-teal-300">{stats.lowestTokensModel.model} (~{stats.lowestTokensModel.avgTokens} توكن)</span>
+                        🪙 أقل متوسط استهلاك للتوكنات:{' '}
+                        <span className="text-teal-700 dark:text-teal-300">
+                          {stats.lowestTokensModel.model} ({stats.lowestTokensModel.avgTokens} توكن)
+                        </span>
                       </div>
                     )}
                   </div>
 
-                  {/* جدول تفاصيل كل نموذج */}
                   <div className="space-y-2.5">
                     {stats.models.map((m) => (
                       <div
@@ -1338,13 +1489,15 @@ export default function App() {
                         className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 space-y-1.5 text-xs"
                       >
                         <div className="flex items-center justify-between font-extrabold text-sm">
-                          <span>{m.model}</span>
-                          <span className="text-teal-600 dark:text-teal-400">{m.goodRate}% جيد</span>
+                          <span className="font-mono">{m.model}</span>
+                          <span className="text-teal-600 dark:text-teal-400">
+                            نسبة التقييم الجيد: {m.goodRate}%
+                          </span>
                         </div>
-                        <div className="flex flex-wrap justify-between text-slate-600 dark:text-slate-300 font-bold">
-                          <span>التجارب: {m.totalRuns} (👍 {m.goodCount} | 👎 {m.badCount})</span>
-                          <span>السرعة: {m.avgTimeSec} ث</span>
-                          <span>التوكنات: ~{m.avgTokens}</span>
+                        <div className="flex flex-wrap justify-between text-slate-600 dark:text-slate-300 font-bold gap-2">
+                          <span>إجمالي التجارب: {m.totalRuns} (👍 {m.goodCount} | 👎 {m.badCount})</span>
+                          <span>متوسط التوكنات: {m.avgTokens}</span>
+                          <span>متوسط السرعة: {m.avgTimeSec} ثانية</span>
                         </div>
                       </div>
                     ))}
@@ -1356,7 +1509,7 @@ export default function App() {
         </div>
       )}
 
-      {/* شريط التنقل السفلي بحجم كبير وواضح جداً للموبايل */}
+      {/* شريط التنقل السفلي بحجم كبير وواضح للموبايل */}
       <nav className="fixed bottom-0 inset-x-0 z-40 bg-white dark:bg-slate-900 border-t-2 border-slate-200 dark:border-slate-800 shadow-2xl pb-[env(safe-area-inset-bottom)]">
         <div className="max-w-lg mx-auto px-2 py-2.5 grid grid-cols-5 gap-1.5">
           <button

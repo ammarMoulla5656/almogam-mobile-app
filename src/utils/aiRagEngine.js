@@ -1,36 +1,42 @@
 /**
- * محرك الذكاء الاصطناعي والبحث الموفر للتوكنات (AI RAG Search & Benchmarking Engine)
- * يدعم:
- * 1. استرجاع هجين محلي (Local Hybrid Retrieval) مع فك الإحالات ("راجع ...") تلقائياً.
- * 2. الاتصال المباشر بمزودي الذكاء الاصطناعي: Google Gemini, OpenAI, DeepSeek, Anthropic Claude, Custom OpenAI-Compatible URL.
- * 3. حساب زمن الاستجابة وعدد التوكنات المستهلكة.
- * 4. حفظ وتصدير واستيراد سجل التجارب (ai_benchmark_logs.json & CSV) وحساب إحصائيات مقارنة النماذج.
+ * محرك البحث الدلالي السحابي والمحلي (OpenAI Responses API + File Search Vector Store RAG & Benchmarking)
+ * - يدعم OpenAI Responses API (/v1/responses) مع أداة file_search ومخزن المتجهات Vector Store:
+ *   vs_6ad37a3dabac81918cc341f5c2bd0d02
+ * - يطبق Structured Outputs (json_schema: dictionary_search_results) بصرامة.
+ * - يستخرج النتائج من output_text أو من مصفوفة output -> message -> content[0].text.
+ * - يستخرج بيانات التوكنات (input_tokens, output_tokens, total_tokens) وزمن الاستجابة بالثواني.
+ * - يدعم أيضاً التبديل لمزودات أخرى للتجربة والمقارنة (Gemini, DeepSeek, Claude) مع إرجاع نفس هيكل الـ JSON الموحد.
  */
 
 import { normalizeArabic, smartSearchEntries } from './smartSearch.js';
 
-export const DEFAULT_SYSTEM_PROMPT = `أنت باحث معجمي خبير في "المعجم الفقهي" و"المعجم الأصولي" و"المعجم اللغوي".
-مهمتك مساعدة المستخدم في الوصول إلى المصطلح الدقيق ومعناه بالاعتماد الحصري على "مقتطفات المعجم المرفقة" مع السؤال.
+export const DEFAULT_VECTOR_STORE_ID = 'vs_6ad37a3dabac81918cc341f5c2bd0d02';
 
-التزم بالقواعد التالية بدقة:
-1. إذا سأل المستخدم عن معنى كلمة مباشرة: اعرض له تعريفها من المعجم المرفق مع ذكر (نوع المعجم، رقم الصفحة، والمصدر المذكور بين الأقواس).
-2. إذا سأل المستخدم سؤالاً بالمعنى أو باللهجة العامية (مثلاً يصف حالة أو عملية ويريد معرفة اسمها الفقهي أو اللغوي): استنتج المصطلح المطابق من المقتطفات المرفقة، واذكر اسمه بوضوح في بداية الجواب ثم اشرح معناه من نص المعجم.
-3. الترشيحات: في نهاية إجابتك، رشّح للمستخدم (من 2 إلى 4 مصطلحات ذات صلة) وردت في المقتطفات المرفقة تحت عنوان "كلمات مقترحة من المعجم:".
-4. الأمانة العلمية: لا تؤلف أي تعريف أو حكم شرعي من خارج النصوص المرفقة، وإذا لم تجد الإجابة في المقتطفات المرفقة قل بوضوح: "لا يوجد نص مطابق في المقترحات الحالية، جرّب تغيير كلمات البحث".
-5. الاختصار والوضوح: اجعل إجابتك مباشرة، مرتبة، وسريعة القراءة.`;
+export const DEFAULT_SYSTEM_PROMPT = `أنت محرك بحث معجمي مقيد. مهمتك الوحيدة هي فهم سؤال المستخدم (سواء كان باللهجة العامية العراقية أو الفصحى) واستخراج المصطلحات المطابقة له حصراً من ملفات المعجم في أداة file_search.
+الحدود الصارمة للعمل:
+1. ممنوع الشرح الطويل أو الإفتاء أو إضافة أي حرف من خارج المعجم.
+2. إذا وجدت في النص عبارة إحالة مثل (راجع كذا)، ابحث عن المصطلح المحال إليه واستخرج معناه.
+3. أرجع النتيجة دائماً بصيغة JSON فقط بدون أي نص خارجه، وتحتوي على قائمة (results) بحد أقصى 5 مصطلحات ليختار المستخدم منها، وكل عنصر يحتوي على:
+- id: معرف الكلمة في المعجم إن وجد (مثل fiqh_647) أو اتركه فارغاً.
+- term: اسم المصطلح الدقيق كما ورد في المعجم.
+- dictionaryId: نوع المعجم (مثلاً: fiqhi_main).
+- page: رقم الصفحة.
+- short_meaning: ملخص مكثف جداً للمعنى من نص المعجم لا يتجاوز 20 كلمة يوضح للمستخدم لماذا هذا المصطلح يطابق سؤاله.
+- source: المصدر المذكور بين الأقواس باختصار.
+إذا لم تجد أي مصطلح مطابق في المعجم، أرجع مصفوفة results فارغة مع رسالة قصيرة في حقل message.`;
 
 export const AI_PROVIDERS = [
+  {
+    id: 'openai',
+    name: 'OpenAI (Responses API + File Search)',
+    defaultModel: 'gpt-4o-mini',
+    suggestedModels: ['gpt-4o-mini', 'gpt-4o', 'o3-mini', 'gpt-4.1-mini']
+  },
   {
     id: 'gemini',
     name: 'Google Gemini',
     defaultModel: 'gemini-2.5-flash',
-    suggestedModels: ['gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.5-pro', 'gemini-2.0-flash']
-  },
-  {
-    id: 'openai',
-    name: 'OpenAI',
-    defaultModel: 'gpt-4o-mini',
-    suggestedModels: ['gpt-4o-mini', 'gpt-4o', 'gpt-4.1-mini', 'gpt-4.1-nano']
+    suggestedModels: ['gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.5-pro']
   },
   {
     id: 'deepseek',
@@ -42,15 +48,34 @@ export const AI_PROVIDERS = [
     id: 'claude',
     name: 'Anthropic Claude',
     defaultModel: 'claude-3-7-sonnet-latest',
-    suggestedModels: ['claude-3-7-sonnet-latest', 'claude-3-5-haiku-latest', 'claude-3-5-sonnet-latest']
-  },
-  {
-    id: 'custom',
-    name: 'Custom OpenAI-Compatible URL',
-    defaultModel: 'gpt-4o-mini',
-    suggestedModels: ['gpt-4o-mini', 'llama-3.3-70b-versatile', 'qwen-2.5-72b-instruct']
+    suggestedModels: ['claude-3-7-sonnet-latest', 'claude-3-5-haiku-latest']
   }
 ];
+
+export const DICTIONARY_SEARCH_SCHEMA = {
+  type: 'object',
+  properties: {
+    results: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          id: { type: 'string' },
+          term: { type: 'string' },
+          dictionaryId: { type: 'string' },
+          page: { type: 'number' },
+          short_meaning: { type: 'string' },
+          source: { type: 'string' }
+        },
+        required: ['id', 'term', 'dictionaryId', 'page', 'short_meaning', 'source'],
+        additionalProperties: false
+      }
+    },
+    message: { type: 'string' }
+  },
+  required: ['results', 'message'],
+  additionalProperties: false
+};
 
 const DICT_LABELS = {
   fiqhi_main: 'المعجم الفقهي',
@@ -58,12 +83,147 @@ const DICT_LABELS = {
   lughawi_dict: 'المعجم اللغوي'
 };
 
-/**
- * استخراج أفضل المرشحات محلياً مع فك إحالات "راجع ..." تلقائياً
- */
-export function retrieveLocalCandidates(allDictionaries, query, scopeDictId = 'all', maxCandidates = 6) {
-  if (!query || !query.trim()) return [];
+export function getDictionaryLabel(dictId) {
+  return DICT_LABELS[dictId] || dictId || 'المعجم الفقهي';
+}
 
+/**
+ * بناء جسم الطلب القياسي لـ OpenAI Responses API مع أداة file_search و json_schema
+ */
+export function buildOpenAiResponsesRequestBody({
+  model,
+  instructions,
+  userQuery,
+  vectorStoreIds,
+  maxNumResults = 5,
+  scopeFilter = 'all'
+}) {
+  const validStoreIds = (Array.isArray(vectorStoreIds) ? vectorStoreIds : [vectorStoreIds])
+    .map((s) => String(s || '').trim())
+    .filter(Boolean);
+
+  if (validStoreIds.length === 0) {
+    validStoreIds.push(DEFAULT_VECTOR_STORE_ID);
+  }
+
+  const scopeHint =
+    scopeFilter && scopeFilter !== 'all'
+      ? ` [نطاق البحث المطلوب: ${scopeFilter} (${getDictionaryLabel(scopeFilter)})]`
+      : '';
+
+  const isReasoningModel = /^o\d/i.test((model || '').trim());
+
+  const body = {
+    model: (model || 'gpt-4o-mini').trim(),
+    instructions: instructions || DEFAULT_SYSTEM_PROMPT,
+    input: `${userQuery}${scopeHint}`,
+    max_output_tokens: 450,
+    tools: [
+      {
+        type: 'file_search',
+        vector_store_ids: validStoreIds,
+        max_num_results: Number(maxNumResults) || 5
+      }
+    ],
+    text: {
+      format: {
+        type: 'json_schema',
+        name: 'dictionary_search_results',
+        strict: true,
+        schema: DICTIONARY_SEARCH_SCHEMA
+      }
+    }
+  };
+
+  if (!isReasoningModel) {
+    body.temperature = 0.1;
+  }
+
+  return body;
+}
+
+/**
+ * استخراج وفهم الرد (Response Parsing) من استجابة OpenAI Responses API
+ */
+export function parseOpenAiResponsesOutput(apiResponseData) {
+  if (!apiResponseData) {
+    return { results: [], message: 'لم ترد استجابة من الخادم.' };
+  }
+
+  let rawJsonText = '';
+
+  // 1. الفحص المباشر للحقل output_text إن وجد
+  if (typeof apiResponseData.output_text === 'string' && apiResponseData.output_text.trim()) {
+    rawJsonText = apiResponseData.output_text.trim();
+  }
+
+  // 2. البحث داخل مصفوفة output -> العنصر ذو النوع message -> content[0].text
+  if (!rawJsonText && Array.isArray(apiResponseData.output)) {
+    const msgItem = apiResponseData.output.find((item) => item && item.type === 'message');
+    if (msgItem && Array.isArray(msgItem.content)) {
+      for (const part of msgItem.content) {
+        if (typeof part?.text === 'string' && part.text.trim()) {
+          rawJsonText = part.text.trim();
+          break;
+        }
+      }
+    }
+    // احتياط في حال كان النص في أي عنصر داخل output
+    if (!rawJsonText) {
+      for (const item of apiResponseData.output) {
+        if (Array.isArray(item?.content)) {
+          for (const part of item.content) {
+            if (typeof part?.text === 'string' && part.text.trim()) {
+              rawJsonText = part.text.trim();
+              break;
+            }
+          }
+        }
+        if (rawJsonText) break;
+      }
+    }
+  }
+
+  if (!rawJsonText) {
+    return { results: [], message: 'لم يتم العثور على نص مخرجات في رد النموذج.' };
+  }
+
+  // تنظيف أي علامات markdown ```json إن وجدت وتحويلها إلى كائن برمجي
+  const cleaned = rawJsonText
+    .replace(/^```json\s*/i, '')
+    .replace(/^```\s*/i, '')
+    .replace(/\s*```$/i, '')
+    .trim();
+
+  try {
+    const parsed = JSON.parse(cleaned);
+    return {
+      results: Array.isArray(parsed.results) ? parsed.results : [],
+      message: typeof parsed.message === 'string' ? parsed.message : ''
+    };
+  } catch {
+    // محاولة استخراج أول كائن JSON من النص
+    const match = cleaned.match(/\{[\s\S]*\}/);
+    if (match) {
+      try {
+        const parsed = JSON.parse(match[0]);
+        return {
+          results: Array.isArray(parsed.results) ? parsed.results : [],
+          message: typeof parsed.message === 'string' ? parsed.message : ''
+        };
+      } catch {
+        // ignore
+      }
+    }
+    return { results: [], message: rawJsonText };
+  }
+}
+
+/**
+ * استرجاع هجين محلي للمزودات الأخرى (عند التبديل للتجربة خارج OpenAI Vector Store)
+ */
+export function retrieveLocalCandidates(allDictionaries, query, scopeDictId = 'all', maxCandidates = 5) {
+  if (!query || !query.trim()) return [];
   let pool = [];
   const allEntriesMap = new Map();
 
@@ -75,17 +235,15 @@ export function retrieveLocalCandidates(allDictionaries, query, scopeDictId = 'a
         dictionaryLabel: dict.category || DICT_LABELS[dict.id] || 'المعجم'
       };
       allEntriesMap.set(normalizeArabic(entry.term), enriched);
-      if (scopeDictId === 'all' || scopeDictId === 'auto' || dict.id === scopeDictId) {
+      if (scopeDictId === 'all' || dict.id === scopeDictId) {
         pool.push(enriched);
       }
     }
   }
 
-  // في حال كان النطاق "auto" (تحديد تلقائي)، نبحث في جميع المعاجم ونرتب الأعلى تطابقاً
   const results = smartSearchEntries(pool, query, { letterFilter: 'الكل', searchScope: 'all' });
-  const topCandidates = results.slice(0, Number(maxCandidates) || 6);
+  const topCandidates = results.slice(0, Number(maxCandidates) || 5);
 
-  // فك الإحالات التي تبدأ بكلمة "راجع" وجلب تعريف الكلمة المحال إليها تلقائياً
   return topCandidates.map((cand) => {
     let resolvedDefinition = cand.definition;
     const refRegex = /راجع\s+(?:لفظ|كلمة|باب)?\s*[«"(\[]?([^»")\].،:]{2,30})[»")\]]?/g;
@@ -95,82 +253,107 @@ export function retrieveLocalCandidates(allDictionaries, query, scopeDictId = 'a
     for (const m of matches) {
       const refTermRaw = m[1].trim();
       const normRef = normalizeArabic(refTermRaw);
-      let targetEntry = allEntriesMap.get(normRef);
-      if (!targetEntry) {
-        // بحث جزئي سريع عن الكلمة المحال إليها
-        for (const [k, v] of allEntriesMap.entries()) {
-          if (k === normRef || k.includes(normRef) || normRef.includes(k)) {
-            targetEntry = v;
-            break;
-          }
-        }
-      }
+      const targetEntry = allEntriesMap.get(normRef);
       if (targetEntry && targetEntry.id !== cand.id) {
         resolvedNotes.push(`[تعريف "${targetEntry.term}" المحال إليه: ${targetEntry.definition}]`);
       }
     }
-
     if (resolvedNotes.length > 0) {
       resolvedDefinition = `${cand.definition} ${resolvedNotes.join(' ')}`;
     }
-
     return {
       id: cand.id,
       term: cand.term,
       definition: resolvedDefinition,
-      originalDefinition: cand.definition,
-      letter: cand.letter,
       page: cand.page,
       dictionaryId: cand.dictionaryId,
-      dictionaryLabel: cand.dictionaryLabel,
       sources: cand.sources || []
     };
   });
 }
 
-/**
- * بناء النص المضغوط الموفر للتوكنات الذي يُرسل مع سؤال المستخدم
- */
-export function buildCompressedContextPrompt(userQuery, candidates) {
-  const lines = candidates.map((c, idx) => {
-    const srcText = c.sources && c.sources.length ? ` | المصادر: ${c.sources.join('، ')}` : '';
-    return `${idx + 1}. [${c.dictionaryLabel} - ص ${c.page}] ${c.term}: ${c.definition}${srcText}`;
-  });
-
-  return `سؤال المستخدم: "${userQuery}"
-
-مقتطفات المعجم المرفقة (${candidates.length} مصطلحات):
-${lines.join('\n')}`;
-}
-
-/**
- * تقدير عدد التوكنات في حال لم يرجع المزود usage صريحاً
- */
 export function estimateTokens(text) {
   if (!text) return 0;
   return Math.ceil(text.length / 3.2);
 }
 
 /**
- * إرسال الطلب إلى مزود الذكاء الاصطناعي المختار وحساب الزمن والتوكنات
+ * استدعاء البحث الدلالي السحابي عبر OpenAI Responses API (/v1/responses) أو المزود البديل للتجربة
  */
-export async function callAiProvider({
-  provider,
-  model,
-  apiKey,
-  customUrl,
-  systemPrompt,
-  userQuery,
-  candidates
+export async function executeCloudSemanticSearch({
+  provider = 'openai',
+  model = 'gpt-4o-mini',
+  apiKey = '',
+  vectorStoreIds = [DEFAULT_VECTOR_STORE_ID],
+  maxNumResults = 5,
+  systemPrompt = DEFAULT_SYSTEM_PROMPT,
+  userQuery = '',
+  scopeFilter = 'all',
+  allDictionaries = []
 }) {
   if (!apiKey || !apiKey.trim()) {
-    throw new Error('يرجى إدخال مفتاح الـ API لهذا المزود في شاشة الإعدادات أولاً.');
+    throw new Error('يرجى إدخال مفتاح الـ API (API Key) في شاشة الإعدادات أولاً.');
   }
 
-  const userPrompt = buildCompressedContextPrompt(userQuery, candidates);
   const startTime = performance.now();
 
-  let answerText = '';
+  // المسار الأساسي ١: OpenAI Responses API مع أداة file_search والـ Vector Store
+  if (provider === 'openai') {
+    const requestBody = buildOpenAiResponsesRequestBody({
+      model,
+      instructions: systemPrompt,
+      userQuery,
+      vectorStoreIds,
+      maxNumResults,
+      scopeFilter
+    });
+
+    const response = await fetch('https://api.openai.com/v1/responses', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey.trim()}`
+      },
+      body: JSON.stringify(requestBody)
+    });
+
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data?.error?.message || `خطأ من OpenAI Responses API (${response.status})`);
+    }
+
+    const parsed = parseOpenAiResponsesOutput(data);
+    const usage = data?.usage || {};
+    const inputTokens = usage.input_tokens || 0;
+    const outputTokens = usage.output_tokens || 0;
+    const totalTokens =
+      usage.total_tokens || inputTokens + outputTokens || estimateTokens(JSON.stringify(parsed));
+    const elapsedSeconds = Number(((performance.now() - startTime) / 1000).toFixed(2));
+
+    return {
+      results: parsed.results,
+      message: parsed.message,
+      inputTokens,
+      outputTokens,
+      totalTokens,
+      responseTimeSec: elapsedSeconds
+    };
+  }
+
+  // المسار ٢: دعم التبديل لمزودات أخرى للتجربة والمقارنة مع إرجاع نفس هيكل الـ JSON
+  const localCands = retrieveLocalCandidates(allDictionaries, userQuery, scopeFilter, maxNumResults);
+  const contextLines = localCands
+    .map(
+      (c) =>
+        `- id: ${c.id} | term: ${c.term} | dictionaryId: ${c.dictionaryId} | page: ${c.page} | text: ${c.definition} | source: ${(c.sources || []).join('، ')}`
+    )
+    .join('\n');
+
+  const promptForOtherProvider = `سؤال المستخدم: "${userQuery}"\n\nمقتطفات المعجم:\n${contextLines}\n\nأرجع JSON فقط مطابقاً للمخطط: {"results": [{"id":"","term":"","dictionaryId":"","page":1,"short_meaning":"","source":""}], "message": ""}`;
+
+  let rawText = '';
+  let inputTokens = 0;
+  let outputTokens = 0;
   let totalTokens = 0;
 
   if (provider === 'gemini') {
@@ -180,34 +363,19 @@ export async function callAiProvider({
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        systemInstruction: {
-          parts: [{ text: systemPrompt || DEFAULT_SYSTEM_PROMPT }]
-        },
-        contents: [
-          {
-            role: 'user',
-            parts: [{ text: userPrompt }]
-          }
-        ],
-        generationConfig: {
-          temperature: 0.2
-        }
+        systemInstruction: { parts: [{ text: systemPrompt || DEFAULT_SYSTEM_PROMPT }] },
+        contents: [{ role: 'user', parts: [{ text: promptForOtherProvider }] }],
+        generationConfig: { temperature: 0.1, responseMimeType: 'application/json' }
       })
     });
-
     const data = await response.json();
-    if (!response.ok) {
-      throw new Error(data?.error?.message || `خطأ من Gemini API (${response.status})`);
-    }
-    answerText =
-      data?.candidates?.[0]?.content?.parts?.map((p) => p.text || '').join('\n') ||
-      'لم يتم إرجاع نص من النموذج.';
-    totalTokens =
-      data?.usageMetadata?.totalTokenCount ||
-      estimateTokens((systemPrompt || '') + userPrompt + answerText);
+    if (!response.ok) throw new Error(data?.error?.message || 'خطأ من Gemini API');
+    rawText = data?.candidates?.[0]?.content?.parts?.map((p) => p.text || '').join('\n') || '{}';
+    inputTokens = data?.usageMetadata?.promptTokenCount || 0;
+    outputTokens = data?.usageMetadata?.candidatesTokenCount || 0;
+    totalTokens = data?.usageMetadata?.totalTokenCount || estimateTokens(promptForOtherProvider + rawText);
   } else if (provider === 'claude') {
-    const url = 'https://api.anthropic.com/v1/messages';
-    const response = await fetch(url, {
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -217,102 +385,126 @@ export async function callAiProvider({
       },
       body: JSON.stringify({
         model: (model || 'claude-3-7-sonnet-latest').trim(),
-        max_tokens: 1024,
-        temperature: 0.2,
+        max_tokens: 450,
+        temperature: 0.1,
         system: systemPrompt || DEFAULT_SYSTEM_PROMPT,
-        messages: [{ role: 'user', content: userPrompt }]
+        messages: [{ role: 'user', content: promptForOtherProvider }]
       })
     });
-
     const data = await response.json();
-    if (!response.ok) {
-      throw new Error(data?.error?.message || `خطأ من Claude API (${response.status})`);
-    }
-    answerText =
-      data?.content?.map((c) => c.text || '').join('\n') || 'لم يتم إرجاع نص من النموذج.';
-    totalTokens =
-      (data?.usage?.input_tokens || 0) + (data?.usage?.output_tokens || 0) ||
-      estimateTokens((systemPrompt || '') + userPrompt + answerText);
+    if (!response.ok) throw new Error(data?.error?.message || 'خطأ من Claude API');
+    rawText = data?.content?.map((c) => c.text || '').join('\n') || '{}';
+    inputTokens = data?.usage?.input_tokens || 0;
+    outputTokens = data?.usage?.output_tokens || 0;
+    totalTokens = inputTokens + outputTokens || estimateTokens(promptForOtherProvider + rawText);
   } else {
-    // OpenAI / DeepSeek / Custom OpenAI-Compatible URL
-    let endpoint = 'https://api.openai.com/v1/chat/completions';
-    if (provider === 'deepseek') {
-      endpoint = 'https://api.deepseek.com/chat/completions';
-    } else if (provider === 'custom') {
-      endpoint = (customUrl || '').trim() || 'https://api.openai.com/v1/chat/completions';
-    }
-
-    const response = await fetch(endpoint, {
+    const response = await fetch('https://api.deepseek.com/chat/completions', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${apiKey.trim()}`
       },
       body: JSON.stringify({
-        model: (model || 'gpt-4o-mini').trim(),
-        temperature: 0.2,
+        model: (model || 'deepseek-chat').trim(),
+        temperature: 0.1,
+        response_format: { type: 'json_object' },
         messages: [
           { role: 'system', content: systemPrompt || DEFAULT_SYSTEM_PROMPT },
-          { role: 'user', content: userPrompt }
+          { role: 'user', content: promptForOtherProvider }
         ]
       })
     });
-
     const data = await response.json();
-    if (!response.ok) {
-      throw new Error(data?.error?.message || `خطأ من المزود (${response.status})`);
-    }
-    answerText = data?.choices?.[0]?.message?.content || 'لم يتم إرجاع نص من النموذج.';
-    totalTokens =
-      data?.usage?.total_tokens ||
-      estimateTokens((systemPrompt || '') + userPrompt + answerText);
+    if (!response.ok) throw new Error(data?.error?.message || 'خطأ من DeepSeek API');
+    rawText = data?.choices?.[0]?.message?.content || '{}';
+    inputTokens = data?.usage?.prompt_tokens || 0;
+    outputTokens = data?.usage?.completion_tokens || 0;
+    totalTokens = data?.usage?.total_tokens || estimateTokens(promptForOtherProvider + rawText);
   }
 
+  const parsed = parseOpenAiResponsesOutput({ output_text: rawText });
   const elapsedSeconds = Number(((performance.now() - startTime) / 1000).toFixed(2));
 
   return {
-    answer: answerText.trim(),
-    tokens: totalTokens,
+    results: parsed.results,
+    message: parsed.message,
+    inputTokens,
+    outputTokens,
+    totalTokens,
     responseTimeSec: elapsedSeconds
   };
 }
 
 /**
- * تحويل سجلات التقييم إلى صيغة CSV
+ * مطابقة البطاقة المقترحة مع بيانات المعجم المحلية لفتح التعريف الكامل والأصلي
+ */
+export function findFullEntryInDictionaries(allDictionaries, cardItem) {
+  if (!cardItem) return null;
+  const targetId = String(cardItem.id || '').trim();
+  const targetTermNorm = normalizeArabic(cardItem.term || '');
+
+  // 1. البحث بواسطة id الدقيق
+  if (targetId) {
+    for (const dict of allDictionaries) {
+      const foundById = (dict.preparedEntries || dict.entries || []).find((e) => e.id === targetId);
+      if (foundById) return { entry: foundById, dict };
+    }
+  }
+
+  // 2. البحث بواسطة تطابق اسم المصطلح (term)
+  if (targetTermNorm) {
+    for (const dict of allDictionaries) {
+      const entries = dict.preparedEntries || dict.entries || [];
+      const exact = entries.find((e) => (e._normTerm || normalizeArabic(e.term)) === targetTermNorm);
+      if (exact) return { entry: exact, dict };
+    }
+    for (const dict of allDictionaries) {
+      const entries = dict.preparedEntries || dict.entries || [];
+      const partial = entries.find(
+        (e) =>
+          (e._normTerm || normalizeArabic(e.term)).includes(targetTermNorm) ||
+          targetTermNorm.includes(e._normTerm || normalizeArabic(e.term))
+      );
+      if (partial) return { entry: partial, dict };
+    }
+  }
+
+  return null;
+}
+
+/**
+ * تحويل سجل التجارب (ai_search_benchmarks) إلى صيغة CSV
  */
 export function convertLogsToCsv(logs) {
   const headers = [
     'timestamp',
     'provider',
     'model',
-    'dictionaryScope',
+    'vectorStoreId',
     'query',
-    'candidatesSent',
+    'suggestedTerms',
+    'totalTokens',
+    'inputTokens',
+    'outputTokens',
     'responseTimeSec',
-    'tokens',
     'rating',
-    'note',
-    'answer',
     'systemPrompt'
   ];
 
-  const escapeCsv = (val) => {
-    const s = String(val ?? '').replace(/"/g, '""');
-    return `"${s}"`;
-  };
+  const escapeCsv = (val) => `"${String(val ?? '').replace(/"/g, '""')}"`;
 
   const rows = logs.map((log) => [
     log.timestamp,
-    log.provider,
+    log.provider || 'OpenAI',
     log.model,
-    log.dictionaryScope,
+    log.vectorStoreId || DEFAULT_VECTOR_STORE_ID,
     log.query,
-    (log.candidatesSent || []).map((c) => c.term || c).join(' | '),
+    (log.results || []).map((r) => `${r.term} (ص${r.page})`).join(' | '),
+    log.totalTokens ?? log.tokens ?? 0,
+    log.inputTokens ?? 0,
+    log.outputTokens ?? 0,
     log.responseTimeSec,
-    log.tokens,
     log.rating,
-    log.note || '',
-    log.answer,
     log.systemPrompt
   ]);
 
@@ -320,7 +512,7 @@ export function convertLogsToCsv(logs) {
 }
 
 /**
- * حساب إحصائيات ومقارنة النماذج من سجل التجارب
+ * حساب ملخص أداء النماذج من سجل التجارب
  */
 export function computeBenchmarkStats(logs) {
   if (!logs || logs.length === 0) {
@@ -330,11 +522,11 @@ export function computeBenchmarkStats(logs) {
   const byModel = new Map();
 
   for (const log of logs) {
-    const key = `${log.provider} • ${log.model}`;
+    const key = `${log.model}`;
     if (!byModel.has(key)) {
       byModel.set(key, {
         key,
-        provider: log.provider,
+        provider: log.provider || 'OpenAI',
         model: log.model,
         totalRuns: 0,
         goodCount: 0,
@@ -348,7 +540,7 @@ export function computeBenchmarkStats(logs) {
     if (log.rating === 'good' || log.rating === 'جيد') item.goodCount += 1;
     else item.badCount += 1;
     item.totalTimeSec += Number(log.responseTimeSec) || 0;
-    item.totalTokens += Number(log.tokens) || 0;
+    item.totalTokens += Number(log.totalTokens ?? log.tokens) || 0;
   }
 
   const models = Array.from(byModel.values()).map((m) => ({
@@ -358,7 +550,7 @@ export function computeBenchmarkStats(logs) {
     avgTokens: Math.round(m.totalTokens / m.totalRuns)
   }));
 
-  models.sort((a, b) => b.goodRate - a.goodRate || a.avgTimeSec - b.avgTimeSec);
+  models.sort((a, b) => b.goodRate - a.goodRate || a.avgTokens - b.avgTokens);
 
   const bestAccuracyModel = [...models].sort((a, b) => b.goodRate - a.goodRate || b.goodCount - a.goodCount)[0];
   const fastestModel = [...models].sort((a, b) => a.avgTimeSec - b.avgTimeSec)[0];

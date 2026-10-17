@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-import json
 import os
 import re
 
@@ -15,7 +14,11 @@ with open(os.path.join(BASE_DIR, 'src/utils/smartSearch.js'), 'r', encoding='utf
 with open(os.path.join(BASE_DIR, 'src/utils/aiRagEngine.js'), 'r', encoding='utf-8') as f:
     ai_rag_code = f.read()
     ai_rag_code = re.sub(r'^import\s+.*?;?\s*$', '', ai_rag_code, flags=re.MULTILINE)
-    ai_rag_code = ai_rag_code.replace('export const ', 'const ').replace('export function ', 'function ').replace('export async function ', 'async function ')
+    ai_rag_code = (
+        ai_rag_code.replace('export const ', 'const ')
+        .replace('export function ', 'function ')
+        .replace('export async function ', 'async function ')
+    )
 
 html_template = f"""<!DOCTYPE html>
 <html lang="ar" dir="rtl">
@@ -77,8 +80,8 @@ html_template = f"""<!DOCTYPE html>
       THEME: 'almogam_theme_v1',
       BOOKMARKS: 'almogam_bookmarks_v1',
       FONT_SIZE: 'almogam_font_size_v1',
-      AI_CONFIG: 'almogam_ai_config_v1',
-      AI_LOGS: 'ai_benchmark_logs'
+      AI_CONFIG: 'almogam_ai_config_v2',
+      AI_LOGS: 'ai_search_benchmarks'
     }};
 
     const ARABIC_CHAPTERS = [
@@ -120,24 +123,23 @@ html_template = f"""<!DOCTYPE html>
     }};
 
     const DEFAULT_AI_CONFIG = {{
-      provider: 'gemini',
+      provider: 'openai',
       modelsByProvider: {{
-        gemini: 'gemini-2.5-flash',
         openai: 'gpt-4o-mini',
+        gemini: 'gemini-2.5-flash',
         deepseek: 'deepseek-chat',
-        claude: 'claude-3-7-sonnet-latest',
-        custom: 'gpt-4o-mini'
+        claude: 'claude-3-7-sonnet-latest'
       }},
       apiKeysByProvider: {{
-        gemini: '',
         openai: '',
+        gemini: '',
         deepseek: '',
-        claude: '',
-        custom: ''
+        claude: ''
       }},
-      customUrl: 'https://api.openai.com/v1/chat/completions',
-      systemPrompt: DEFAULT_SYSTEM_PROMPT,
-      maxCandidates: 6
+      vectorStoreId: DEFAULT_VECTOR_STORE_ID,
+      extraVectorStoreIds: '',
+      maxNumResults: 5,
+      systemPrompt: DEFAULT_SYSTEM_PROMPT
     }};
 
     function loadAiConfig() {{
@@ -171,15 +173,13 @@ html_template = f"""<!DOCTYPE html>
       allDictionaries: [],
       // Floating AI Sheet state
       aiSheetOpen: false,
-      aiScope: 'auto',
+      aiScope: 'all', // 'all' | 'fiqhi_main' | 'usuli_dict' | 'lughawi_dict'
       aiQuery: '',
-      aiCandidates: [],
-      manualTermInput: '',
       aiLoading: false,
       aiResult: null,
       aiError: null,
-      feedbackNote: '',
       feedbackGiven: null,
+      selectedFullEntryModal: null, // {{ entry, dict, aiCard }}
       showStatsModal: false
     }};
 
@@ -220,7 +220,7 @@ html_template = f"""<!DOCTYPE html>
       if (!toast) {{
         toast = document.createElement('div');
         toast.id = 'toast-banner';
-        toast.className = 'fixed top-5 left-1/2 -translate-x-1/2 z-[70] bg-teal-700 text-white px-6 py-3 rounded-full shadow-2xl text-sm font-bold transition-all';
+        toast.className = 'fixed top-5 left-1/2 -translate-x-1/2 z-[90] bg-teal-700 text-white px-6 py-3 rounded-full shadow-2xl text-sm font-bold transition-all';
         document.body.appendChild(toast);
       }}
       toast.textContent = '✓ ' + msg;
@@ -313,12 +313,9 @@ html_template = f"""<!DOCTYPE html>
       renderApp();
     }};
 
-    window.copyEntry = async function(id, ev) {{
+    window.copyTextFormatted = async function(term, definition, category, page, ev) {{
       if (ev) ev.stopPropagation();
-      const dict = state.allDictionaries.find(d => d.id === state.selectedDictId) || state.allDictionaries[0];
-      const entry = dict.preparedEntries.find(e => e.id === id);
-      if (!entry) return;
-      const text = `📘 ${{entry.term}}\\n\\n${{entry.definition}}\\n\\n— (${{dict.category}} - تطبيق المعجم)`;
+      const text = `📘 ${{term}}\\n\\n${{definition}}\\n\\n— (${{category || 'المعجم الفقهي'}} - ص ${{page || 1}} - تطبيق المعجم)`;
       try {{
         if (window.Capacitor?.Plugins?.Clipboard) {{
           await window.Capacitor.Plugins.Clipboard.write({{ string: text }});
@@ -333,15 +330,30 @@ html_template = f"""<!DOCTYPE html>
           document.body.removeChild(ta);
         }}
       }} catch {{}}
-      showToast(`تم نسخ "${{entry.term}}" مع الجواب!`);
+      showToast(`تم نسخ "${{term}}" مع الجواب!`);
     }};
 
-    window.jumpToTerm = function(term, ev) {{
+    window.copyEntry = async function(id, ev) {{
+      if (ev) ev.stopPropagation();
+      const dict = state.allDictionaries.find(d => d.id === state.selectedDictId) || state.allDictionaries[0];
+      const entry = dict.preparedEntries.find(e => e.id === id);
+      if (!entry) return;
+      await window.copyTextFormatted(entry.term, entry.definition, dict.category, entry.page, ev);
+    }};
+
+    window.jumpToTerm = function(term, dictId, entryId, ev) {{
       if (ev) ev.stopPropagation();
       const cleaned = term.replace(/[«»"()]/g, '').trim();
+      if (dictId && state.allDictionaries.some(d => d.id === dictId)) {{
+        state.selectedDictId = dictId;
+      }}
       state.selectedLetter = 'الكل';
       state.activeTab = 'dictionary';
       state.searchQuery = cleaned;
+      if (entryId) {{
+        state.expandedIds.add(entryId);
+      }}
+      state.selectedFullEntryModal = null;
       state.aiSheetOpen = false;
       renderApp();
       renderModals();
@@ -376,16 +388,26 @@ html_template = f"""<!DOCTYPE html>
       saveAiConfig();
     }};
 
-    window.onAiCustomUrlChange = function(val) {{
-      state.aiConfig.customUrl = val;
+    window.onVectorStoreIdChange = function(val) {{
+      state.aiConfig.vectorStoreId = val;
       saveAiConfig();
     }};
 
-    window.onAiMaxCandidatesChange = function(val) {{
-      state.aiConfig.maxCandidates = Number(val) || 6;
+    window.restoreDefaultVectorStoreId = function() {{
+      state.aiConfig.vectorStoreId = DEFAULT_VECTOR_STORE_ID;
       saveAiConfig();
-      const badge = document.getElementById('max-cand-badge');
-      if (badge) badge.textContent = state.aiConfig.maxCandidates + ' كلمات';
+      renderContentOnly();
+      showToast('تمت استعادة معرف الـ Vector Store الافتراضي');
+    }};
+
+    window.onExtraVectorStoreIdsChange = function(val) {{
+      state.aiConfig.extraVectorStoreIds = val;
+      saveAiConfig();
+    }};
+
+    window.onAiMaxNumResultsChange = function(val) {{
+      state.aiConfig.maxNumResults = Math.max(1, Math.min(15, Number(val) || 5));
+      saveAiConfig();
     }};
 
     window.onAiSystemPromptChange = function(val) {{
@@ -397,10 +419,19 @@ html_template = f"""<!DOCTYPE html>
       state.aiConfig.systemPrompt = DEFAULT_SYSTEM_PROMPT;
       saveAiConfig();
       renderContentOnly();
-      showToast('تمت استعادة الرسالة الافتراضية');
+      showToast('تمت استعادة البرومبت الافتراضي');
     }};
 
-    // دوال النافذة العائمة للذكاء الاصطناعي (Floating AI Sheet Handlers)
+    function getActiveVectorStoreIds() {{
+      const primary = (state.aiConfig.vectorStoreId || DEFAULT_VECTOR_STORE_ID).trim();
+      const extras = (state.aiConfig.extraVectorStoreIds || '')
+        .split(',')
+        .map(s => s.trim())
+        .filter(Boolean);
+      return [primary, ...extras].filter(Boolean);
+    }}
+
+    // دوال واجهة البحث العائمة (Floating AI Search Handlers)
     window.openAiSheet = function() {{
       state.aiSheetOpen = true;
       renderModals();
@@ -413,135 +444,156 @@ html_template = f"""<!DOCTYPE html>
 
     window.setAiScope = function(scope) {{
       state.aiScope = scope;
-      if (state.aiQuery.trim()) {{
-        state.aiCandidates = retrieveLocalCandidates(state.allDictionaries, state.aiQuery, state.aiScope, state.aiConfig.maxCandidates);
-      }}
       renderModals();
     }};
 
     window.onAiQueryInput = function(val) {{
       state.aiQuery = val;
-      if (!val.trim()) {{
-        state.aiCandidates = [];
-      }} else {{
-        state.aiCandidates = retrieveLocalCandidates(state.allDictionaries, val, state.aiScope, state.aiConfig.maxCandidates);
-      }}
-      const candBox = document.getElementById('ai-candidates-box');
-      if (candBox) candBox.innerHTML = renderAiCandidatesBoxHtml();
-    }};
-
-    window.removeAiCandidate = function(id) {{
-      state.aiCandidates = state.aiCandidates.filter(c => c.id !== id);
-      const candBox = document.getElementById('ai-candidates-box');
-      if (candBox) candBox.innerHTML = renderAiCandidatesBoxHtml();
-    }};
-
-    window.addManualAiCandidate = function() {{
-      const inp = document.getElementById('manual-cand-input');
-      const val = inp ? inp.value.trim() : '';
-      if (!val) return;
-      const found = retrieveLocalCandidates(state.allDictionaries, val, 'all', 1);
-      if (found.length > 0) {{
-        if (!state.aiCandidates.some(c => c.id === found[0].id)) {{
-          state.aiCandidates.push(found[0]);
-          showToast(`تمت إضافة "${{found[0].term}}" للمقترحات`);
-        }}
-      }} else {{
-        state.aiCandidates.push({{
-          id: 'custom_' + Date.now(),
-          term: val,
-          definition: val,
-          letter: 'مضاف',
-          page: 1,
-          dictionaryId: 'fiqhi_main',
-          dictionaryLabel: 'مضاف يدوياً',
-          sources: []
-        }});
-      }}
-      if (inp) inp.value = '';
-      const candBox = document.getElementById('ai-candidates-box');
-      if (candBox) candBox.innerHTML = renderAiCandidatesBoxHtml();
     }};
 
     window.runAiSearch = async function() {{
       if (!state.aiQuery.trim()) {{
-        showToast('يرجى كتابة السؤال أو المعنى أولاً');
+        showToast('يرجى كتابة سؤالك أو المعنى المراد البحث عنه أولاً');
         return;
       }}
       state.aiLoading = true;
       state.aiError = null;
       state.aiResult = null;
       state.feedbackGiven = null;
-      state.feedbackNote = '';
       renderModals();
 
-      const providerId = state.aiConfig.provider;
+      const providerId = state.aiConfig.provider || 'openai';
       const providerObj = AI_PROVIDERS.find(p => p.id === providerId) || AI_PROVIDERS[0];
       const modelName = state.aiConfig.modelsByProvider[providerId] || providerObj.defaultModel;
       const apiKey = state.aiConfig.apiKeysByProvider[providerId] || '';
+      const storeIds = getActiveVectorStoreIds();
 
       try {{
-        const res = await callAiProvider({{
+        const res = await executeCloudSemanticSearch({{
           provider: providerId,
           model: modelName,
           apiKey,
-          customUrl: state.aiConfig.customUrl,
-          systemPrompt: state.aiConfig.systemPrompt,
-          userQuery: state.aiQuery,
-          candidates: state.aiCandidates
+          vectorStoreIds: storeIds,
+          maxNumResults: Number(state.aiConfig.maxNumResults) || 5,
+          systemPrompt: state.aiConfig.systemPrompt || DEFAULT_SYSTEM_PROMPT,
+          userQuery: state.aiQuery.trim(),
+          scopeFilter: state.aiScope,
+          allDictionaries: state.allDictionaries
         }});
 
         state.aiResult = {{
-          answer: res.answer,
-          tokens: res.tokens,
-          responseTimeSec: res.responseTimeSec,
+          results: res.results || [],
+          message: res.message || '',
+          inputTokens: res.inputTokens || 0,
+          outputTokens: res.outputTokens || 0,
+          totalTokens: res.totalTokens || 0,
+          responseTimeSec: res.responseTimeSec || 0,
           provider: providerObj.name,
           providerId,
           model: modelName,
-          candidatesSent: [...state.aiCandidates],
-          query: state.aiQuery,
+          vectorStoreId: storeIds.join(', '),
+          query: state.aiQuery.trim(),
           scope: state.aiScope
         }};
       }} catch (err) {{
-        state.aiError = err.message || 'حدث خطأ أثناء الاتصال بالنموذج';
+        state.aiError = err.message || 'حدث خطأ أثناء الاتصال بسحابة الذكاء الاصطناعي';
       }} finally {{
         state.aiLoading = false;
         renderModals();
       }}
     }};
 
+    window.removeSuggestedCard = function(idx, ev) {{
+      if (ev) ev.stopPropagation();
+      if (!state.aiResult || !Array.isArray(state.aiResult.results)) return;
+      state.aiResult.results.splice(idx, 1);
+      renderModals();
+    }};
+
+    window.addManualSuggestedCard = function() {{
+      const inp = document.getElementById('manual-suggested-input');
+      const val = inp ? inp.value.trim() : '';
+      if (!val || !state.aiResult) return;
+      const matched = findFullEntryInDictionaries(state.allDictionaries, {{ term: val }});
+      const newCard = matched
+        ? {{
+            id: matched.entry.id,
+            term: matched.entry.term,
+            dictionaryId: matched.dict.id,
+            page: matched.entry.page || 1,
+            short_meaning: matched.entry.definition.slice(0, 110) + '...',
+            source: (matched.entry.sources || [])[0] || matched.dict.category
+          }}
+        : {{
+            id: 'manual_' + Date.now(),
+            term: val,
+            dictionaryId: state.aiScope === 'all' ? 'fiqhi_main' : state.aiScope,
+            page: 1,
+            short_meaning: 'مصطلح مضاف يدوياً لتصحيح القائمة المقترحة',
+            source: 'إضافة يدوية'
+          }};
+      state.aiResult.results.push(newCard);
+      if (inp) inp.value = '';
+      renderModals();
+      showToast(`تمت إضافة "${{newCard.term}}" إلى البطاقات المقترحة`);
+    }};
+
+    window.openSuggestedCardFullView = function(idx) {{
+      if (!state.aiResult || !state.aiResult.results[idx]) return;
+      const cardItem = state.aiResult.results[idx];
+      const matched = findFullEntryInDictionaries(state.allDictionaries, cardItem);
+      if (matched) {{
+        state.selectedFullEntryModal = {{
+          entry: matched.entry,
+          dict: matched.dict,
+          aiCard: cardItem
+        }};
+      }} else {{
+        state.selectedFullEntryModal = {{
+          entry: {{
+            id: cardItem.id || 'ai_term',
+            term: cardItem.term,
+            definition: cardItem.short_meaning || 'اضغط على زر (فتح في المعجم) للبحث عن النص الكامل.',
+            letter: (cardItem.term || '').replace(/^ال/, '').charAt(0) || 'أ',
+            page: cardItem.page || 1,
+            sources: cardItem.source ? [cardItem.source] : []
+          }},
+          dict: state.allDictionaries.find(d => d.id === cardItem.dictionaryId) || state.allDictionaries[0],
+          aiCard: cardItem
+        }};
+      }}
+      renderModals();
+    }};
+
+    window.closeFullEntryModal = function() {{
+      state.selectedFullEntryModal = null;
+      renderModals();
+    }};
+
     window.rateAiResult = function(type) {{
       if (!state.aiResult) return;
-      const noteEl = document.getElementById('ai-feedback-note');
-      const noteVal = noteEl ? noteEl.value.trim() : '';
       const logItem = {{
-        id: 'log_' + Date.now(),
+        id: 'bench_' + Date.now(),
         timestamp: new Date().toLocaleString('sv-SE'),
         provider: state.aiResult.provider,
         model: state.aiResult.model,
+        vectorStoreId: state.aiResult.vectorStoreId || DEFAULT_VECTOR_STORE_ID,
         systemPrompt: state.aiConfig.systemPrompt,
-        dictionaryScope: state.aiResult.scope,
         query: state.aiResult.query,
-        candidatesSent: state.aiResult.candidatesSent.map(c => ({{
-          id: c.id,
-          term: c.term,
-          page: c.page,
-          dictionaryId: c.dictionaryId
-        }})),
-        answer: state.aiResult.answer,
-        tokens: state.aiResult.tokens,
+        results: state.aiResult.results,
+        inputTokens: state.aiResult.inputTokens,
+        outputTokens: state.aiResult.outputTokens,
+        totalTokens: state.aiResult.totalTokens,
         responseTimeSec: state.aiResult.responseTimeSec,
-        rating: type === 'good' ? 'جيد' : 'سيء',
-        note: noteVal
+        rating: type === 'good' ? 'جيد' : 'سيء'
       }};
 
       const nextLogs = [logItem, ...state.benchmarkLogs];
       persistBenchmarkLogs(nextLogs);
       state.feedbackGiven = type;
-      state.feedbackNote = noteVal;
       renderModals();
       if (state.activeTab === 'about') renderContentOnly();
-      showToast(`تم حفظ التقييم (${{logItem.rating}}) في ai_benchmark_logs.json`);
+      showToast(`تم حفظ التقييم (${{logItem.rating}}) في ai_search_benchmarks.json`);
     }};
 
     window.openStatsModal = function() {{
@@ -556,12 +608,12 @@ html_template = f"""<!DOCTYPE html>
 
     window.exportBenchmarkLogs = function(format) {{
       if (state.benchmarkLogs.length === 0) {{
-        showToast('لا توجد سجلات تقييم محفوظة بعد');
+        showToast('لا توجد تجارب محفوظة بعد للتصدير');
         return;
       }}
       const isCsv = format === 'csv';
       const content = isCsv ? convertLogsToCsv(state.benchmarkLogs) : JSON.stringify(state.benchmarkLogs, null, 2);
-      const filename = isCsv ? 'ai_benchmark_logs.csv' : 'ai_benchmark_logs.json';
+      const filename = isCsv ? 'ai_search_benchmarks.csv' : 'ai_search_benchmarks.json';
 
       if (window.AndroidShare && typeof window.AndroidShare.share === 'function') {{
         window.AndroidShare.saveBenchmarkFiles(
@@ -593,7 +645,7 @@ html_template = f"""<!DOCTYPE html>
           const parsed = JSON.parse(e.target.result);
           const imported = Array.isArray(parsed) ? parsed : (parsed.logs || []);
           if (!imported.length) {{
-            showToast('الملف لا يحتوي على سجلات صالحة');
+            showToast('الملف لا يحتوي على تجارب صالحة');
             return;
           }}
           const merged = [...imported, ...state.benchmarkLogs];
@@ -621,7 +673,7 @@ html_template = f"""<!DOCTYPE html>
       return {{ currentDict, filtered, bookmarksSet }};
     }}
 
-    function renderCardsHtml(entriesList, bookmarksSet) {{
+    function renderCardsHtml(entriesList, bookmarksSet, currentDict) {{
       const currentFont = FONT_STYLES[state.fontSize] || FONT_STYLES.md;
       const slice = entriesList.slice(0, state.visibleCount);
       if (slice.length === 0) {{
@@ -647,7 +699,7 @@ html_template = f"""<!DOCTYPE html>
                 </div>
                 <div class="min-w-0">
                   <h2 style="font-size: ${{currentFont.termSize}};" class="font-extrabold text-slate-900 dark:text-white leading-snug">${{escapeHtml(entry.term)}}</h2>
-                  ${{!isOpen ? `<p class="text-xs text-slate-500 dark:text-slate-400 mt-1">باب ${{escapeHtml(entry.letter)}}</p>` : ''}}
+                  ${{!isOpen ? `<p class="text-xs text-slate-500 dark:text-slate-400 mt-1">باب ${{escapeHtml(entry.letter)}} • ص ${{entry.page || 1}}</p>` : ''}}
                 </div>
               </div>
               <div class="flex items-center gap-2 shrink-0">
@@ -663,8 +715,8 @@ html_template = f"""<!DOCTYPE html>
                   ${{escapeHtml(entry.definition)}}
                 </p>
                 <div class="flex flex-wrap items-center gap-2 mt-3 mb-4">
-                  <span class="text-xs font-bold px-3 py-1 rounded-xl bg-teal-100/80 dark:bg-teal-950/80 text-teal-800 dark:text-teal-300">باب حرف ${{escapeHtml(entry.letter)}}</span>
-                  ${{refMatch ? `<button onclick="jumpToTerm('${{escapeHtml(refMatch[1])}}', event)" class="text-xs font-bold px-3 py-1 rounded-xl bg-amber-100 dark:bg-amber-950/70 text-amber-800 dark:text-amber-300">↗ راجع: ${{escapeHtml(refMatch[1])}}</button>` : ''}}
+                  <span class="text-xs font-bold px-3 py-1 rounded-xl bg-teal-100/80 dark:bg-teal-950/80 text-teal-800 dark:text-teal-300">باب حرف ${{escapeHtml(entry.letter)}} (ص ${{entry.page || 1}})</span>
+                  ${{refMatch ? `<button onclick="jumpToTerm('${{escapeHtml(refMatch[1])}}', '${{currentDict.id}}', null, event)" class="text-xs font-bold px-3 py-1 rounded-xl bg-amber-100 dark:bg-amber-950/70 text-amber-800 dark:text-amber-300">↗ راجع: ${{escapeHtml(refMatch[1])}}</button>` : ''}}
                 </div>
                 <button onclick="copyEntry('${{entry.id}}', event)" class="w-full py-3.5 rounded-2xl bg-teal-600 hover:bg-teal-700 active:scale-95 text-white text-sm font-extrabold shadow-md transition">📋 نسخ الجواب</button>
               </div>
@@ -685,7 +737,6 @@ html_template = f"""<!DOCTYPE html>
 
     function renderMainSection() {{
       const {{ currentDict, filtered, bookmarksSet }} = getFilteredData();
-      const currentFont = FONT_STYLES[state.fontSize] || FONT_STYLES.md;
       const activeProviderObj = AI_PROVIDERS.find(p => p.id === state.aiConfig.provider) || AI_PROVIDERS[0];
 
       // ١. الواجهة الرئيسية
@@ -715,7 +766,7 @@ html_template = f"""<!DOCTYPE html>
 
       // ٢. شاشة المعجم والمحفوظات
       if (state.activeTab === 'dictionary' || state.activeTab === 'bookmarks') {{
-        return renderCardsHtml(filtered, bookmarksSet);
+        return renderCardsHtml(filtered, bookmarksSet, currentDict);
       }}
 
       // ٣. خانة الفهرست
@@ -738,7 +789,7 @@ html_template = f"""<!DOCTYPE html>
         `;
       }}
 
-      // ٤. شاشة الإعدادات (تضم: المظهر والخط + إعدادات الذكاء الاصطناعي والمقارنة + بطاقة الكتاب والمؤلف)
+      // ٤. شاشة الإعدادات
       return `
         <div class="space-y-4 select-text">
           <!-- أ. إعدادات المظهر والخط -->
@@ -765,73 +816,72 @@ html_template = f"""<!DOCTYPE html>
             </div>
           </div>
 
-          <!-- ب. إعدادات الذكاء الاصطناعي (AI Settings) والمقارنة -->
+          <!-- ب. شاشة إعدادات الذكاء الاصطناعي (AI Settings) -->
           <div class="bg-white dark:bg-slate-900 rounded-3xl p-6 border-2 border-teal-500/40 dark:border-teal-500/30 shadow-md space-y-4">
-            <h3 class="text-xl font-extrabold text-slate-900 dark:text-white border-b border-slate-100 dark:border-slate-800 pb-3">
-              ✨ إعدادات الذكاء الاصطناعي (AI Settings)
-            </h3>
+            <div class="border-b border-slate-100 dark:border-slate-800 pb-3">
+              <h3 class="text-xl font-extrabold text-slate-900 dark:text-white">✨ إعدادات الذكاء الاصطناعي (AI Settings)</h3>
+              <p class="text-xs text-slate-500 dark:text-slate-400 font-bold mt-0.5">OpenAI Responses API + File Search (Cloud Vector Store RAG)</p>
+            </div>
 
             <div>
-              <label class="block text-sm font-extrabold text-slate-700 dark:text-slate-300 mb-1.5">المزود (Provider):</label>
-              <select onchange="onAiProviderChange(this.value)" class="w-full px-4 py-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 font-bold text-base">
+              <label class="block text-sm font-extrabold text-slate-700 dark:text-slate-300 mb-1.5">مزود الذكاء الاصطناعي (Provider):</label>
+              <select onchange="onAiProviderChange(this.value)" class="w-full px-4 py-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 font-bold text-sm">
                 ${{AI_PROVIDERS.map(p => `<option value="${{p.id}}" ${{state.aiConfig.provider === p.id ? 'selected' : ''}}>${{escapeHtml(p.name)}}</option>`).join('')}}
               </select>
             </div>
 
-            ${{state.aiConfig.provider === 'custom' ? `
-              <div>
-                <label class="block text-sm font-extrabold text-slate-700 dark:text-slate-300 mb-1.5">رابط الـ API المخصص (Custom OpenAI URL):</label>
-                <input type="text" dir="ltr" value="${{escapeHtml(state.aiConfig.customUrl)}}" oninput="onAiCustomUrlChange(this.value)" class="w-full px-4 py-3 rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-sm font-mono" />
-              </div>
-            ` : ''}}
+            <div>
+              <label class="block text-sm font-extrabold text-slate-700 dark:text-slate-300 mb-1.5">🔑 مفتاح API Key الخاص بـ (${{escapeHtml(activeProviderObj.name)}}):</label>
+              <input type="password" dir="ltr" value="${{escapeHtml(state.aiConfig.apiKeysByProvider[state.aiConfig.provider] || '')}}" oninput="onAiApiKeyChange(this.value)" placeholder="sk-proj-..." class="w-full px-4 py-3 rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 font-mono text-sm" />
+            </div>
 
             <div>
               <label class="block text-sm font-extrabold text-slate-700 dark:text-slate-300 mb-1.5">اسم النموذج (Model Name):</label>
-              <input type="text" dir="ltr" value="${{escapeHtml(state.aiConfig.modelsByProvider[state.aiConfig.provider] || '')}}" oninput="onAiModelChange(this.value)" class="w-full px-4 py-3 rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 font-mono text-sm font-bold" />
+              <input type="text" dir="ltr" value="${{escapeHtml(state.aiConfig.modelsByProvider[state.aiConfig.provider] || '')}}" oninput="onAiModelChange(this.value)" placeholder="gpt-4o-mini" class="w-full px-4 py-3 rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 font-mono text-sm font-bold" />
               <div class="flex flex-wrap gap-1.5 mt-2" dir="ltr">
                 ${{activeProviderObj.suggestedModels.map(m => `
-                  <button type="button" onclick="selectSuggestedModel('${{m}}')" class="px-2.5 py-1 rounded-xl text-xs font-mono font-bold border ${{state.aiConfig.modelsByProvider[state.aiConfig.provider] === m ? 'bg-teal-600 text-white border-teal-600' : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-300 dark:border-slate-700'}}">${{m}}</button>
+                  <button type="button" onclick="selectSuggestedModel('${{m}}')" class="px-3 py-1 rounded-xl text-xs font-mono font-bold border ${{state.aiConfig.modelsByProvider[state.aiConfig.provider] === m ? 'bg-teal-600 text-white border-teal-600' : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-300 dark:border-slate-700'}}">${{m}}</button>
                 `).join('')}}
               </div>
             </div>
 
-            <div>
-              <label class="block text-sm font-extrabold text-slate-700 dark:text-slate-300 mb-1.5">🔑 مفتاح الـ API لـ (${{escapeHtml(activeProviderObj.name)}}) - يُحفظ تلقائياً:</label>
-              <input type="password" dir="ltr" value="${{escapeHtml(state.aiConfig.apiKeysByProvider[state.aiConfig.provider] || '')}}" oninput="onAiApiKeyChange(this.value)" placeholder="أدخل مفتاح الـ API هنا..." class="w-full px-4 py-3 rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 font-mono text-sm" />
+            <div class="space-y-2 pt-1">
+              <label class="block text-sm font-extrabold text-slate-700 dark:text-slate-300">🗄️ معرف مخزن المتجهات الأساسي (Vector Store ID):</label>
+              <div class="flex gap-2">
+                <input type="text" dir="ltr" value="${{escapeHtml(state.aiConfig.vectorStoreId)}}" oninput="onVectorStoreIdChange(this.value)" placeholder="${{DEFAULT_VECTOR_STORE_ID}}" class="flex-1 px-3.5 py-3 rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 font-mono text-xs font-bold" />
+                <button type="button" onclick="restoreDefaultVectorStoreId()" class="px-3 py-2 rounded-2xl bg-teal-50 dark:bg-slate-800 text-teal-700 dark:text-teal-300 border border-teal-200 dark:border-slate-700 text-xs font-extrabold shrink-0">الافتراضي</button>
+              </div>
+              <label class="block text-xs font-extrabold text-slate-500 dark:text-slate-400 pt-1">معرفات Vector Store إضافية للأصولي واللغوي (اختياري - افصل بفاصلة):</label>
+              <input type="text" dir="ltr" value="${{escapeHtml(state.aiConfig.extraVectorStoreIds || '')}}" oninput="onExtraVectorStoreIdsChange(this.value)" placeholder="vs_xxx, vs_yyy" class="w-full px-3.5 py-2.5 rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 font-mono text-xs" />
             </div>
 
             <div>
               <div class="flex items-center justify-between mb-1.5">
-                <label class="text-sm font-extrabold text-slate-700 dark:text-slate-300">عدد مقترحات المعجم المرسلة في كل بحث:</label>
-                <span id="max-cand-badge" class="px-3 py-1 rounded-xl bg-teal-100 dark:bg-teal-950 text-teal-800 dark:text-teal-300 font-extrabold text-sm">${{state.aiConfig.maxCandidates}} كلمات</span>
+                <label class="text-sm font-extrabold text-slate-700 dark:text-slate-300">الحد الأقصى لنتائج البحث السحابي (max_num_results):</label>
+                <input type="number" min="1" max="15" dir="ltr" value="${{state.aiConfig.maxNumResults || 5}}" oninput="onAiMaxNumResultsChange(this.value)" class="w-20 px-3 py-1.5 rounded-xl bg-teal-50 dark:bg-slate-800 border border-teal-300 dark:border-slate-700 text-center font-mono font-extrabold text-base text-teal-800 dark:text-teal-300" />
               </div>
-              <input type="range" min="3" max="10" value="${{state.aiConfig.maxCandidates}}" oninput="onAiMaxCandidatesChange(this.value)" class="w-full accent-teal-600 h-2 bg-slate-200 rounded-lg cursor-pointer" />
-              <div class="flex justify-between text-xs text-slate-400 mt-1">
-                <span>3 (توفير أقصى)</span>
-                <span>6 (الافتراضي)</span>
-                <span>10 (تغطية أوسع)</span>
-              </div>
+              <p class="text-xs text-slate-400">القيمة الافتراضية 5 لتقليل استهلاك التوكنات مع دقة استرجاع عالية.</p>
             </div>
 
             <div>
               <div class="flex items-center justify-between mb-1.5">
-                <label class="text-sm font-extrabold text-slate-700 dark:text-slate-300">الرسالة التوجيهية (System Prompt):</label>
-                <button type="button" onclick="restoreDefaultPrompt()" class="text-xs font-extrabold text-teal-700 dark:text-teal-400 bg-teal-50 dark:bg-slate-800 px-2.5 py-1.5 rounded-xl border border-teal-200 dark:border-slate-700">↺ استعادة الرسالة الافتراضية</button>
+                <label class="text-sm font-extrabold text-slate-700 dark:text-slate-300">برومبت النظام المقيد (System Instructions):</label>
+                <button type="button" onclick="restoreDefaultPrompt()" class="text-xs font-extrabold text-teal-700 dark:text-teal-400 bg-teal-50 dark:bg-slate-800 px-2.5 py-1.5 rounded-xl border border-teal-200 dark:border-slate-700">↺ استعادة البرومبت الافتراضي</button>
               </div>
-              <textarea rows="6" oninput="onAiSystemPromptChange(this.value)" class="w-full p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-sm leading-relaxed">${{escapeHtml(state.aiConfig.systemPrompt)}}</textarea>
+              <textarea rows="7" oninput="onAiSystemPromptChange(this.value)" class="w-full p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-xs sm:text-sm leading-relaxed">${{escapeHtml(state.aiConfig.systemPrompt)}}</textarea>
             </div>
 
             <div class="pt-3 border-t border-slate-100 dark:border-slate-800 space-y-2.5">
-              <div class="text-sm font-extrabold text-slate-800 dark:text-slate-200">سجل التجارب ومقارنة النماذج (${{state.benchmarkLogs.length}} تجربة مسجلة):</div>
-              <button type="button" onclick="openStatsModal()" class="w-full py-3.5 px-4 rounded-2xl bg-teal-600 hover:bg-teal-700 text-white font-extrabold text-sm shadow-md">📊 ١. إحصائيات ومقارنة النماذج</button>
+              <div class="text-sm font-extrabold text-slate-800 dark:text-slate-200">إدارة ملف التجارب ai_search_benchmarks.json (${{state.benchmarkLogs.length}} تجربة):</div>
               <div class="grid grid-cols-2 gap-2.5">
-                <button type="button" onclick="exportBenchmarkLogs('json')" class="py-3 px-3 rounded-2xl bg-slate-800 dark:bg-slate-700 text-white font-extrabold text-xs">📥 ٢. تصدير JSON</button>
-                <button type="button" onclick="exportBenchmarkLogs('csv')" class="py-3 px-3 rounded-2xl bg-emerald-700 text-white font-extrabold text-xs">📥 تصدير CSV</button>
+                <button type="button" onclick="exportBenchmarkLogs('json')" class="py-3.5 px-3 rounded-2xl bg-slate-800 dark:bg-slate-700 text-white font-extrabold text-xs">📥 ١. تصدير ومشاركة JSON</button>
+                <button type="button" onclick="exportBenchmarkLogs('csv')" class="py-3.5 px-3 rounded-2xl bg-emerald-700 text-white font-extrabold text-xs">📥 تصدير ومشاركة CSV</button>
               </div>
-              <label class="w-full py-3 px-4 rounded-2xl bg-amber-500/15 text-amber-800 dark:text-amber-300 border border-amber-400/40 font-extrabold text-xs flex items-center justify-center gap-2 cursor-pointer">
-                <span>📂 ٣. استيراد ملف تجارب (Import JSON)</span>
+              <label class="w-full py-3.5 px-4 rounded-2xl bg-amber-500/15 text-amber-800 dark:text-amber-300 border border-amber-400/40 font-extrabold text-xs flex items-center justify-center gap-2 cursor-pointer">
+                <span>📂 ٢. استيراد ملف تجارب (Import JSON)</span>
                 <input type="file" accept=".json" onchange="importBenchmarkLogs(event)" class="hidden" />
               </label>
+              <button type="button" onclick="openStatsModal()" class="w-full py-3.5 px-4 rounded-2xl bg-teal-600 hover:bg-teal-700 text-white font-extrabold text-sm shadow-md">📊 ٣. ملخص أداء النماذج</button>
             </div>
           </div>
 
@@ -853,73 +903,54 @@ html_template = f"""<!DOCTYPE html>
       `;
     }}
 
-    function renderAiCandidatesBoxHtml() {{
-      if (state.aiCandidates.length === 0) {{
-        return `<p class="text-xs text-slate-400">اكتب سؤالك بالأعلى لاستخراج أقرب المصطلحات محلياً (مع فك الإحالات) قبل إرسالها للنموذج...</p>`;
-      }}
-      return `
-        <div class="flex flex-wrap gap-1.5">
-          ${{state.aiCandidates.map(cand => `
-            <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl bg-white dark:bg-slate-900 border border-teal-500/40 text-xs font-extrabold text-teal-800 dark:text-teal-300">
-              <span>${{escapeHtml(cand.term)}}</span>
-              <button onclick="removeAiCandidate('${{cand.id}}')" class="text-rose-500 font-bold">✕</button>
-            </span>
-          `).join('')}}
-        </div>
-      `;
-    }}
-
     function renderModals() {{
       const root = document.getElementById('modals-root');
       if (!root) return;
       const currentFont = FONT_STYLES[state.fontSize] || FONT_STYLES.md;
-      const activeProviderObj = AI_PROVIDERS.find(p => p.id === state.aiConfig.provider) || AI_PROVIDERS[0];
       let html = '';
 
       if (state.aiSheetOpen) {{
+        const modelName = state.aiConfig.modelsByProvider[state.aiConfig.provider] || 'gpt-4o-mini';
         html += `
           <div class="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
-            <div class="bg-white dark:bg-slate-900 w-full max-w-lg max-h-[90vh] rounded-t-3xl sm:rounded-3xl shadow-2xl border border-slate-200 dark:border-slate-800 flex flex-col overflow-hidden">
+            <div class="bg-white dark:bg-slate-900 w-full max-w-lg max-h-[92vh] rounded-t-3xl sm:rounded-3xl shadow-2xl border border-slate-200 dark:border-slate-800 flex flex-col overflow-hidden">
               <div class="p-4 bg-gradient-to-l from-teal-800 to-emerald-800 text-white flex items-center justify-between">
                 <div>
-                  <h3 class="text-base font-extrabold">✨ البحث الذكي بالذكاء الاصطناعي (RAG)</h3>
-                  <p class="text-[11px] text-teal-100">${{escapeHtml(activeProviderObj.name)}} • ${{escapeHtml(state.aiConfig.modelsByProvider[state.aiConfig.provider])}}</p>
+                  <h3 class="text-base font-extrabold">✨ البحث الدلالي السحابي (OpenAI File Search)</h3>
+                  <p class="text-[11px] text-teal-100 font-mono">${{escapeHtml(modelName)}} • ${{escapeHtml((state.aiConfig.vectorStoreId || '').slice(0, 18))}}...</p>
                 </div>
                 <button onclick="closeAiSheet()" class="px-3 py-1 rounded-full bg-white/15 text-white font-bold">✕</button>
               </div>
 
               <div class="p-4 overflow-y-auto space-y-4 flex-1 select-text">
                 <div>
-                  <div class="text-xs font-extrabold text-slate-500 dark:text-slate-400 mb-2">نطاق البحث في المعاجم:</div>
-                  <div class="flex flex-wrap gap-1.5">
+                  <div class="text-xs font-extrabold text-slate-500 dark:text-slate-400 mb-2">نطاق البحث في المعجم:</div>
+                  <div class="grid grid-cols-4 gap-1.5">
                     ${{[
-                      {{ id: 'auto', label: '✨ تحديد تلقائي ذكي' }},
                       {{ id: 'all', label: 'الكل' }},
-                      {{ id: 'fiqhi_main', label: 'المعجم الفقهي' }},
-                      {{ id: 'usuli_dict', label: 'المعجم الأصولي' }},
-                      {{ id: 'lughawi_dict', label: 'المعجم اللغوي' }}
+                      {{ id: 'fiqhi_main', label: 'الفقهي' }},
+                      {{ id: 'usuli_dict', label: 'الأصولي' }},
+                      {{ id: 'lughawi_dict', label: 'اللغوي' }}
                     ].map(chip => `
-                      <button onclick="setAiScope('${{chip.id}}')" class="px-3 py-1.5 rounded-xl text-xs font-extrabold ${{state.aiScope === chip.id ? 'bg-teal-600 text-white shadow-sm' : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300'}}">${{chip.label}}</button>
+                      <button onclick="setAiScope('${{chip.id}}')" class="py-2 px-2 rounded-xl text-xs font-extrabold ${{state.aiScope === chip.id ? 'bg-teal-600 text-white shadow-sm' : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300'}}">${{chip.label}}</button>
                     `).join('')}}
                   </div>
                 </div>
 
-                <div class="space-y-2">
-                  <textarea rows="2" oninput="onAiQueryInput(this.value)" placeholder="اكتب سؤالك أو المعنى بالعامية أو الفصحى..." class="w-full p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-base font-bold focus:outline-none focus:ring-2 focus:ring-teal-500">${{escapeHtml(state.aiQuery)}}</textarea>
-
-                  <div class="p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-800 space-y-2">
-                    <div class="text-xs font-extrabold text-slate-600 dark:text-slate-300">المقترحات المبدئية المرسلة للنموذج (موفرة للتوكنات):</div>
-                    <div id="ai-candidates-box">${{renderAiCandidatesBoxHtml()}}</div>
-                    <div class="flex items-center gap-2 pt-1">
-                      <input id="manual-cand-input" type="text" placeholder="إضافة مصطلح آخر للمقترحات..." class="flex-1 px-3 py-1.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs font-bold" />
-                      <button type="button" onclick="addManualAiCandidate()" class="px-3 py-1.5 rounded-xl bg-teal-600 text-white text-xs font-extrabold">+ إضافة</button>
-                    </div>
-                  </div>
+                <div class="space-y-2.5">
+                  <textarea rows="2" oninput="onAiQueryInput(this.value)" placeholder="اكتب سؤالك باللهجة العامية العراقية أو الفصحى (مثلاً: شنو يعني الصعيد الطيب؟ أو حكم الشك بعد الفراغ)..." class="w-full p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-base font-bold focus:outline-none focus:ring-2 focus:ring-teal-500">${{escapeHtml(state.aiQuery)}}</textarea>
 
                   <button type="button" onclick="runAiSearch()" ${{state.aiLoading ? 'disabled' : ''}} class="w-full py-3.5 rounded-2xl bg-teal-600 hover:bg-teal-700 disabled:opacity-50 text-white font-extrabold text-base shadow-md">
-                    ${{state.aiLoading ? '⏳ جاري التحليل والإجابة...' : '✨ إرسال للنموذج والبحث الذكي'}}
+                    ${{state.aiLoading ? '⏳ جاري البحث في المعجم...' : '🔍 بحث دلالي في المعجم'}}
                   </button>
                 </div>
+
+                ${{state.aiLoading ? `
+                  <div class="p-6 rounded-3xl bg-teal-50/70 dark:bg-slate-800/60 border border-teal-500/30 text-center space-y-2 animate-pulse">
+                    <p class="text-base font-extrabold text-teal-900 dark:text-teal-200">⏳ جاري البحث في المعجم...</p>
+                    <p class="text-xs text-slate-500 dark:text-slate-400">يتم الآن فحص مخزن المتجهات (${{escapeHtml(state.aiConfig.vectorStoreId)}}) واستخراج المصطلحات المطابقة</p>
+                  </div>
+                ` : ''}}
 
                 ${{state.aiError ? `
                   <div class="p-4 rounded-2xl bg-rose-50 dark:bg-rose-950/50 border border-rose-300 dark:border-rose-800 text-rose-700 dark:text-rose-300 text-sm font-bold">
@@ -927,37 +958,88 @@ html_template = f"""<!DOCTYPE html>
                   </div>
                 ` : ''}}
 
-                ${{state.aiResult ? `
-                  <div class="p-4 rounded-3xl bg-teal-50/60 dark:bg-slate-800/90 border-2 border-teal-500/40 space-y-3">
-                    <div class="flex flex-wrap items-center justify-between gap-2 text-xs font-extrabold pb-2 border-b border-teal-200/60 dark:border-slate-700">
-                      <span class="px-2.5 py-1 rounded-lg bg-teal-600 text-white">🤖 ${{escapeHtml(state.aiResult.model)}}</span>
-                      <span class="px-2.5 py-1 rounded-lg bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300">⏱️ ${{state.aiResult.responseTimeSec}} ثانية</span>
-                      <span class="px-2.5 py-1 rounded-lg bg-slate-200 dark:bg-slate-700 text-slate-800 dark:text-slate-200">🪙 ~${{state.aiResult.tokens}} توكن</span>
-                    </div>
-
-                    <div style="font-size: ${{currentFont.defSize}}; line-height: ${{currentFont.lineHeight}};" class="font-serif whitespace-pre-wrap text-slate-900 dark:text-slate-100 bg-white dark:bg-slate-950 p-4 rounded-2xl border border-slate-200 dark:border-slate-800">${{escapeHtml(state.aiResult.answer)}}</div>
-
-                    ${{state.aiResult.candidatesSent?.length > 0 ? `
-                      <div class="space-y-1.5">
-                        <div class="text-xs font-extrabold text-slate-600 dark:text-slate-300">اضغط على أي مصطلح لفتحه في المعجم:</div>
-                        <div class="flex flex-wrap gap-1.5">
-                          ${{state.aiResult.candidatesSent.map(c => `
-                            <button onclick="jumpToTerm('${{escapeHtml(c.term)}}', event)" class="px-3 py-1.5 rounded-xl bg-teal-600/15 hover:bg-teal-600 hover:text-white text-teal-800 dark:text-teal-300 text-xs font-extrabold">📘 ${{escapeHtml(c.term)}} ↗</button>
-                          `).join('')}}
-                        </div>
+                ${{state.aiResult && !state.aiLoading ? `
+                  <div class="space-y-3.5">
+                    ${{state.aiResult.message ? `
+                      <div class="px-3.5 py-2.5 rounded-2xl bg-teal-50 dark:bg-slate-800 border border-teal-200 dark:border-slate-700 text-xs font-extrabold text-teal-800 dark:text-teal-300">
+                        💡 ${{escapeHtml(state.aiResult.message)}}
                       </div>
                     ` : ''}}
 
-                    <div class="pt-3 border-t border-teal-200/60 dark:border-slate-700 space-y-2">
-                      <div class="text-xs font-extrabold text-slate-700 dark:text-slate-300">قيّم إجابة هذا النموذج لحفظها في سجل المقارنة:</div>
-                      <input id="ai-feedback-note" type="text" value="${{escapeHtml(state.feedbackNote)}}" placeholder="ملاحظة اختيارية على الإجابة..." class="w-full px-3 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs font-bold" />
+                    ${{state.aiResult.results.length === 0 ? `
+                      <div class="p-6 rounded-3xl bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700 text-center space-y-1">
+                        <p class="text-base font-extrabold text-slate-700 dark:text-slate-200">لم يتم العثور على مصطلحات مطابقة في المعجم</p>
+                        <p class="text-xs text-slate-500">جرّب صياغة السؤال بكلمات أخرى أو أضف المصطلح يدوياً بالأسفل.</p>
+                      </div>
+                    ` : `
+                      <div class="space-y-2.5">
+                        <div class="text-xs font-extrabold text-slate-500 dark:text-slate-400">المصطلحات المقترحة (${{state.aiResult.results.length}}) - اضغط على أي بطاقة لعرض التعريف الكامل:</div>
+                        ${{state.aiResult.results.map((item, idx) => `
+                          <div onclick="openSuggestedCardFullView(${{idx}})" class="p-4 rounded-2xl bg-white dark:bg-slate-800/95 border-2 border-slate-200 dark:border-slate-700 hover:border-teal-500 shadow-sm transition cursor-pointer active:scale-[0.99] space-y-2">
+                            <div class="flex items-start justify-between gap-2">
+                              <div class="flex flex-wrap items-center gap-2">
+                                <h4 class="text-lg font-extrabold text-slate-900 dark:text-white">${{escapeHtml(item.term)}}</h4>
+                                <span class="px-2.5 py-0.5 rounded-lg bg-teal-100 dark:bg-teal-950 text-teal-800 dark:text-teal-300 text-xs font-extrabold">${{escapeHtml(getDictionaryLabel(item.dictionaryId))}} • ص ${{item.page || 1}}</span>
+                              </div>
+                              <button type="button" onclick="removeSuggestedCard(${{idx}}, event)" class="px-2 py-1 rounded-lg text-rose-500 hover:bg-rose-50 text-xs font-extrabold" title="حذف البطاقة">✕</button>
+                            </div>
+                            <p class="text-sm text-slate-700 dark:text-slate-200 font-bold leading-relaxed">${{escapeHtml(item.short_meaning)}}</p>
+                            <div class="flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400 pt-1 border-t border-slate-100 dark:border-slate-700/60">
+                              <span>المصدر: ${{escapeHtml(item.source || 'المعجم')}}</span>
+                              <span class="text-teal-600 dark:text-teal-400 font-extrabold">عرض النص الكامل ↗</span>
+                            </div>
+                          </div>
+                        `).join('')}}
+                      </div>
+                    `}}
+
+                    <div class="flex items-center gap-2 pt-1">
+                      <input id="manual-suggested-input" type="text" placeholder="إضافة مصطلح للقائمة المقترحة قبل التقييم..." class="flex-1 px-3.5 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-bold" />
+                      <button type="button" onclick="addManualSuggestedCard()" class="px-3.5 py-2 rounded-xl bg-teal-600 text-white text-xs font-extrabold shrink-0">+ إضافة</button>
+                    </div>
+
+                    <div class="p-3.5 rounded-2xl bg-slate-100 dark:bg-slate-800/90 border border-slate-200 dark:border-slate-700 space-y-2.5">
+                      <div class="text-xs font-extrabold text-center text-slate-700 dark:text-slate-200">
+                        (${{escapeHtml(state.aiResult.model)}} | عدد التوكنات: ${{state.aiResult.totalTokens}} | الوقت: ${{state.aiResult.responseTimeSec}} ثانية)
+                      </div>
                       <div class="grid grid-cols-2 gap-2.5">
-                        <button onclick="rateAiResult('good')" class="py-2.5 rounded-xl font-extrabold text-sm border-2 ${{state.feedbackGiven === 'good' ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-white dark:bg-slate-900 text-emerald-700 border-emerald-500/40'}}">جيد 👍</button>
-                        <button onclick="rateAiResult('bad')" class="py-2.5 rounded-xl font-extrabold text-sm border-2 ${{state.feedbackGiven === 'bad' ? 'bg-rose-600 text-white border-rose-600' : 'bg-white dark:bg-slate-900 text-rose-700 border-rose-500/40'}}">سيء 👎</button>
+                        <button onclick="rateAiResult('good')" class="py-2.5 rounded-xl font-extrabold text-sm border-2 ${{state.feedbackGiven === 'good' ? 'bg-emerald-600 text-white border-emerald-600 shadow-md' : 'bg-white dark:bg-slate-900 text-emerald-700 border-emerald-500/40'}}">جيد 👍</button>
+                        <button onclick="rateAiResult('bad')" class="py-2.5 rounded-xl font-extrabold text-sm border-2 ${{state.feedbackGiven === 'bad' ? 'bg-rose-600 text-white border-rose-600 shadow-md' : 'bg-white dark:bg-slate-900 text-rose-700 border-rose-500/40'}}">سيء 👎</button>
                       </div>
                     </div>
                   </div>
                 ` : ''}}
+              </div>
+            </div>
+          </div>
+        `;
+      }}
+
+      if (state.selectedFullEntryModal) {{
+        const m = state.selectedFullEntryModal;
+        const cat = m.dict?.category || 'المعجم الفقهي';
+        html += `
+          <div class="fixed inset-0 z-[70] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+            <div class="bg-white dark:bg-slate-900 w-full max-w-lg rounded-3xl shadow-2xl border-2 border-teal-500 overflow-hidden flex flex-col max-h-[85vh]">
+              <div class="p-4 bg-gradient-to-l from-teal-800 to-emerald-800 text-white flex items-center justify-between">
+                <div>
+                  <span class="text-xs font-extrabold text-amber-300">${{escapeHtml(cat)}} • صفحة ${{m.entry.page || 1}}</span>
+                  <h3 class="text-xl font-extrabold mt-0.5">${{escapeHtml(m.entry.term)}}</h3>
+                </div>
+                <button onclick="closeFullEntryModal()" class="px-3 py-1 rounded-full bg-white/15 text-white font-bold">✕</button>
+              </div>
+              <div class="p-5 overflow-y-auto space-y-4 select-text">
+                <div style="font-size: ${{currentFont.defSize}}; line-height: ${{currentFont.lineHeight}};" class="font-serif text-slate-900 dark:text-slate-100 bg-slate-50 dark:bg-slate-950 p-4 rounded-2xl border border-slate-200 dark:border-slate-800">
+                  ${{escapeHtml(m.entry.definition)}}
+                </div>
+                <div class="flex flex-wrap gap-2 text-xs font-extrabold">
+                  <span class="px-3 py-1 rounded-xl bg-teal-100 dark:bg-teal-950 text-teal-800 dark:text-teal-300">باب حرف ${{escapeHtml(m.entry.letter || 'أ')}}</span>
+                  ${{m.entry.id ? `<span class="px-3 py-1 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-mono">ID: ${{escapeHtml(m.entry.id)}}</span>` : ''}}
+                </div>
+                <div class="grid grid-cols-2 gap-2.5 pt-2">
+                  <button onclick="copyTextFormatted('${{escapeHtml(m.entry.term)}}', '${{escapeHtml(m.entry.definition)}}', '${{escapeHtml(cat)}}', ${{m.entry.page || 1}}, event)" class="py-3.5 rounded-2xl bg-teal-600 hover:bg-teal-700 text-white font-extrabold text-sm shadow-md">📋 نسخ النص الكامل</button>
+                  <button onclick="jumpToTerm('${{escapeHtml(m.entry.term)}}', '${{escapeHtml(m.dict?.id || 'fiqhi_main')}}', '${{escapeHtml(m.entry.id || '')}}', event)" class="py-3.5 rounded-2xl bg-slate-800 dark:bg-slate-700 text-white font-extrabold text-sm shadow-md">📖 فتح في المعجم</button>
+                </div>
               </div>
             </div>
           </div>
@@ -970,29 +1052,29 @@ html_template = f"""<!DOCTYPE html>
           <div class="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
             <div class="bg-white dark:bg-slate-900 w-full max-w-lg max-h-[85vh] rounded-3xl shadow-2xl border border-slate-200 dark:border-slate-800 flex flex-col overflow-hidden">
               <div class="p-4 bg-teal-700 text-white flex items-center justify-between">
-                <h3 class="text-base font-extrabold">📊 إحصائيات ومقارنة النماذج (${{state.benchmarkLogs.length}} تجربة)</h3>
+                <h3 class="text-base font-extrabold">📊 ملخص أداء النماذج (${{state.benchmarkLogs.length}} تجربة)</h3>
                 <button onclick="closeStatsModal()" class="px-3 py-1 rounded-full bg-white/15 text-white font-bold">✕</button>
               </div>
-              <div class="p-4 overflow-y-auto space-y-4 flex-1">
+              <div class="p-4 overflow-y-auto space-y-4 flex-1 select-text">
                 ${{stats.models.length === 0 ? `
-                  <p class="text-center text-sm text-slate-500 py-8 font-bold">لم يتم تسجيل أي تقييمات بعد. جرّب البحث الذكي واضغط (جيد 👍 أو سيء 👎) لتظهر المقارنة هنا.</p>
+                  <p class="text-center text-sm text-slate-500 py-8 font-bold">لم يتم تسجيل أي تجارب في ai_search_benchmarks.json بعد. جرّب البحث الدلالي واضغط (جيد 👍 أو سيء 👎) لتظهر الإحصائيات هنا.</p>
                 ` : `
                   <div class="grid grid-cols-1 gap-2">
-                    ${{stats.bestAccuracyModel ? `<div class="p-3 rounded-2xl bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-300 dark:border-emerald-800 text-xs font-extrabold">🏆 أعلى نسبة تقييم «جيد»: ${{escapeHtml(stats.bestAccuracyModel.model)}} (${{stats.bestAccuracyModel.goodRate}}%)</div>` : ''}}
-                    ${{stats.fastestModel ? `<div class="p-3 rounded-2xl bg-amber-50 dark:bg-amber-950/50 border border-amber-300 dark:border-amber-800 text-xs font-extrabold">⚡ أسرع وقت استجابة: ${{escapeHtml(stats.fastestModel.model)}} (${{stats.fastestModel.avgTimeSec}} ثانية)</div>` : ''}}
-                    ${{stats.lowestTokensModel ? `<div class="p-3 rounded-2xl bg-teal-50 dark:bg-teal-950/50 border border-teal-300 dark:border-teal-800 text-xs font-extrabold">🪙 أقل استهلاك للتوكنات: ${{escapeHtml(stats.lowestTokensModel.model)}} (~${{stats.lowestTokensModel.avgTokens}} توكن)</div>` : ''}}
+                    ${{stats.bestAccuracyModel ? `<div class="p-3 rounded-2xl bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-300 dark:border-emerald-800 text-xs font-extrabold">🏆 أعلى نسبة تقييم جيد: ${{escapeHtml(stats.bestAccuracyModel.model)}} (${{stats.bestAccuracyModel.goodRate}}%)</div>` : ''}}
+                    ${{stats.fastestModel ? `<div class="p-3 rounded-2xl bg-amber-50 dark:bg-amber-950/50 border border-amber-300 dark:border-amber-800 text-xs font-extrabold">⚡ أسرع متوسط استجابة: ${{escapeHtml(stats.fastestModel.model)}} (${{stats.fastestModel.avgTimeSec}} ثانية)</div>` : ''}}
+                    ${{stats.lowestTokensModel ? `<div class="p-3 rounded-2xl bg-teal-50 dark:bg-teal-950/50 border border-teal-300 dark:border-teal-800 text-xs font-extrabold">🪙 أقل متوسط استهلاك للتوكنات: ${{escapeHtml(stats.lowestTokensModel.model)}} (${{stats.lowestTokensModel.avgTokens}} توكن)</div>` : ''}}
                   </div>
                   <div class="space-y-2.5">
                     ${{stats.models.map(m => `
                       <div class="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 space-y-1.5 text-xs">
                         <div class="flex items-center justify-between font-extrabold text-sm">
-                          <span>${{escapeHtml(m.model)}}</span>
-                          <span class="text-teal-600 dark:text-teal-400">${{m.goodRate}}% جيد</span>
+                          <span class="font-mono">${{escapeHtml(m.model)}}</span>
+                          <span class="text-teal-600 dark:text-teal-400">نسبة التقييم الجيد: ${{m.goodRate}}%</span>
                         </div>
-                        <div class="flex flex-wrap justify-between text-slate-600 dark:text-slate-300 font-bold">
-                          <span>التجارب: ${{m.totalRuns}} (👍 ${{m.goodCount}} | 👎 ${{m.badCount}})</span>
-                          <span>السرعة: ${{m.avgTimeSec}} ث</span>
-                          <span>التوكنات: ~${{m.avgTokens}}</span>
+                        <div class="flex flex-wrap justify-between text-slate-600 dark:text-slate-300 font-bold gap-2">
+                          <span>إجمالي التجارب: ${{m.totalRuns}} (👍 ${{m.goodCount}} | 👎 ${{m.badCount}})</span>
+                          <span>متوسط التوكنات: ${{m.avgTokens}}</span>
+                          <span>متوسط السرعة: ${{m.avgTimeSec}} ثانية</span>
                         </div>
                       </div>
                     `).join('')}}
@@ -1031,15 +1113,16 @@ html_template = f"""<!DOCTYPE html>
                 </div>
 
                 <div class="relative flex items-center">
+                  <span class="absolute right-4 text-teal-200 pointer-events-none text-base">🔍</span>
                   <input
                     id="dict-search-input"
                     type="text"
                     value="${{escapeHtml(state.searchQuery)}}"
                     oninput="onDictSearchInput(this.value)"
-                    placeholder="🔍 ابحث في ${{escapeHtml(currentDict.category)}}..."
-                    class="w-full px-4 py-3.5 rounded-2xl bg-white/15 dark:bg-slate-800/95 text-white placeholder-teal-100/85 border border-white/25 focus:outline-none focus:ring-2 focus:ring-amber-400 text-base font-bold"
+                    placeholder="ابحث في ${{escapeHtml(currentDict.category)}}..."
+                    class="w-full pr-12 pl-12 py-3.5 rounded-2xl bg-white/15 dark:bg-slate-800/95 text-white placeholder-teal-100/85 border border-white/25 focus:outline-none focus:ring-2 focus:ring-amber-400 text-base font-bold"
                   />
-                  ${{state.searchQuery ? `<button onclick="clearSearch()" class="absolute left-3 px-2.5 py-1 rounded-full bg-black/30 text-white text-xs font-bold">✕</button>` : ''}}
+                  ${{state.searchQuery ? `<button onclick="clearSearch()" class="absolute left-3.5 px-2.5 py-1 text-xs bg-black/25 text-white rounded-full">✕</button>` : ''}}
                 </div>
 
                 ${{state.selectedLetter !== 'الكل' ? `
@@ -1056,29 +1139,34 @@ html_template = f"""<!DOCTYPE html>
             ${{renderMainSection()}}
           </main>
 
-          <!-- الزر العائم للبحث الذكي بالذكاء الاصطناعي (FAB) -->
-          <button onclick="openAiSheet()" class="fixed bottom-28 left-4 z-40 flex items-center gap-2 px-5 py-4 rounded-full bg-gradient-to-r from-teal-600 to-emerald-600 text-white font-extrabold text-sm shadow-2xl border-2 border-white/30 active:scale-95 transition">
-            <span>✨ البحث الذكي AI</span>
+          <!-- الزر العائم للبحث الدلالي بالذكاء الاصطناعي (FAB) -->
+          <button
+            onclick="openAiSheet()"
+            class="fixed bottom-28 left-4 z-40 flex items-center gap-2 px-5 py-4 rounded-full bg-gradient-to-r from-teal-600 to-emerald-600 text-white font-extrabold text-sm shadow-2xl border-2 border-white/30 active:scale-95 transition"
+          >
+            <span>✨</span>
+            <span>البحث الدلالي AI</span>
           </button>
 
-          <nav class="fixed bottom-0 inset-x-0 z-40 bg-white dark:bg-slate-900 border-t-2 border-slate-200 dark:border-slate-800 shadow-2xl" style="padding-bottom: env(safe-area-inset-bottom);">
-            <div class="max-w-lg mx-auto px-2 py-2.5 grid grid-cols-5 gap-1.5 text-center">
+          <!-- شريط التنقل السفلي بحجم كبير وواضح للموبايل -->
+          <nav class="fixed bottom-0 inset-x-0 z-40 bg-white dark:bg-slate-900 border-t-2 border-slate-200 dark:border-slate-800 shadow-2xl pb-[env(safe-area-inset-bottom)]">
+            <div class="max-w-lg mx-auto px-2 py-2.5 grid grid-cols-5 gap-1.5">
               <button onclick="switchTab('home')" class="flex flex-col items-center justify-center py-3 px-1 rounded-2xl transition ${{state.activeTab === 'home' ? 'text-white bg-teal-600 shadow-md font-extrabold scale-[1.03]' : 'text-slate-600 dark:text-slate-300 font-bold'}}">
                 <span class="text-2xl mb-1 leading-none">🏠</span>
                 <span class="text-sm leading-tight">الرئيسية</span>
               </button>
               <button onclick="switchTab('dictionary')" class="flex flex-col items-center justify-center py-3 px-1 rounded-2xl transition ${{state.activeTab === 'dictionary' ? 'text-white bg-teal-600 shadow-md font-extrabold scale-[1.03]' : 'text-slate-600 dark:text-slate-300 font-bold'}}">
-                <span class="text-2xl mb-1 leading-none">📘</span>
+                <span class="text-2xl mb-1 leading-none">📖</span>
                 <span class="text-sm leading-tight">المعجم</span>
               </button>
               <button onclick="switchTab('fehrest')" class="flex flex-col items-center justify-center py-3 px-1 rounded-2xl transition ${{state.activeTab === 'fehrest' ? 'text-white bg-teal-600 shadow-md font-extrabold scale-[1.03]' : 'text-slate-600 dark:text-slate-300 font-bold'}}">
-                <span class="text-2xl mb-1 leading-none">🔤</span>
+                <span class="text-2xl mb-1 leading-none">🗂️</span>
                 <span class="text-sm leading-tight">الفهرست</span>
               </button>
               <button onclick="switchTab('bookmarks')" class="relative flex flex-col items-center justify-center py-3 px-1 rounded-2xl transition ${{state.activeTab === 'bookmarks' ? 'text-white bg-teal-600 shadow-md font-extrabold scale-[1.03]' : 'text-slate-600 dark:text-slate-300 font-bold'}}">
-                <span class="text-2xl mb-1 leading-none">★</span>
+                <span class="text-2xl mb-1 leading-none">🔖</span>
                 <span class="text-sm leading-tight">المحفوظات</span>
-                ${{state.bookmarks.length > 0 ? `<span class="absolute top-1.5 right-2.5 w-5 h-5 rounded-full bg-amber-500 text-white text-xs font-extrabold flex items-center justify-center shadow">${{state.bookmarks.length}}</span>` : ''}}
+                ${{state.bookmarks.length > 0 ? `<span class="absolute top-1.5 right-3 w-5 h-5 rounded-full bg-amber-500 text-white text-xs font-extrabold flex items-center justify-center shadow">${{state.bookmarks.length}}</span>` : ''}}
               </button>
               <button onclick="switchTab('about')" class="flex flex-col items-center justify-center py-3 px-1 rounded-2xl transition ${{state.activeTab === 'about' ? 'text-white bg-teal-600 shadow-md font-extrabold scale-[1.03]' : 'text-slate-600 dark:text-slate-300 font-bold'}}">
                 <span class="text-2xl mb-1 leading-none">⚙️</span>
@@ -1098,9 +1186,8 @@ html_template = f"""<!DOCTYPE html>
 </html>
 """
 
-dist_dir = os.path.join(BASE_DIR, 'dist')
-os.makedirs(dist_dir, exist_ok=True)
-with open(os.path.join(dist_dir, 'index.html'), 'w', encoding='utf-8') as f:
+os.makedirs(os.path.join(BASE_DIR, 'dist'), exist_ok=True)
+with open(os.path.join(BASE_DIR, 'dist/index.html'), 'w', encoding='utf-8') as f:
     f.write(html_template)
 
-print("Generated full AI RAG & Benchmarking mobile bundle at dist/index.html")
+print("Built dist/index.html successfully! Size:", len(html_template), "chars")

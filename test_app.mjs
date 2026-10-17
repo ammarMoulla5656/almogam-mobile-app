@@ -1,9 +1,12 @@
 #!/usr/bin/env node
 import fs from 'fs';
-import { prepareEntryForSearch, smartSearchEntries } from './src/utils/smartSearch.js';
+import { prepareEntryForSearch } from './src/utils/smartSearch.js';
 import {
-  retrieveLocalCandidates,
-  buildCompressedContextPrompt,
+  DEFAULT_VECTOR_STORE_ID,
+  DEFAULT_SYSTEM_PROMPT,
+  buildOpenAiResponsesRequestBody,
+  parseOpenAiResponsesOutput,
+  findFullEntryInDictionaries,
   convertLogsToCsv,
   computeBenchmarkStats
 } from './src/utils/aiRagEngine.js';
@@ -16,54 +19,109 @@ const allDictionaries = raw.dictionaries.map((d) => ({
 
 console.log(`✅ Loaded ${allDictionaries.length} dictionaries.`);
 
-// Test 1: Local Hybrid Retrieval with automatic "راجع" reference resolution
-// "الابتهال" says: راجع « التعوذ »
-const cands = retrieveLocalCandidates(allDictionaries, 'ما هو الابتهال في الدعاء', 'auto', 6);
-console.assert(cands.length > 0, 'RAG retrieval failed');
-const ibtihal = cands.find((c) => c.term.includes('الابتهال'));
-console.assert(ibtihal && ibtihal.definition.includes('تعريف "التعوذ" المحال إليه'), 'Reference resolution failed');
-console.log(`🔍 RAG Reference Resolution for "الابتهال" -> Resolved definition length: ${ibtihal.definition.length} chars`);
+// Test 1: OpenAI Responses API Request Body with Vector Store ID vs_6ad37a3dabac81918cc341f5c2bd0d02
+const reqBody = buildOpenAiResponsesRequestBody({
+  model: 'gpt-4o-mini',
+  instructions: DEFAULT_SYSTEM_PROMPT,
+  userQuery: 'شنو يعني الصعيد الطيب؟',
+  vectorStoreIds: [DEFAULT_VECTOR_STORE_ID],
+  maxNumResults: 5,
+  scopeFilter: 'fiqhi_main'
+});
 
-// Test 2: Compressed Token-Saving Context Prompt
-const prompt = buildCompressedContextPrompt('ما هو الابتهال', cands);
-console.assert(prompt.includes('مقتطفات المعجم المرفقة'), 'Compressed prompt failed');
-console.log(`🪙 Compressed Prompt size: ${prompt.length} chars (~${Math.ceil(prompt.length / 3.2)} tokens)`);
+console.assert(reqBody.model === 'gpt-4o-mini', 'Model mismatch');
+console.assert(reqBody.tools[0].type === 'file_search', 'Tool type must be file_search');
+console.assert(
+  reqBody.tools[0].vector_store_ids[0] === 'vs_6ad37a3dabac81918cc341f5c2bd0d02',
+  'Vector store ID mismatch'
+);
+console.assert(reqBody.tools[0].max_num_results === 5, 'max_num_results mismatch');
+console.assert(
+  reqBody.text.format.name === 'dictionary_search_results' && reqBody.text.format.strict === true,
+  'JSON schema format mismatch'
+);
+console.log('✅ Test 1 passed: OpenAI Responses API request body structure verified.');
 
-// Test 3: Benchmark Analytics & CSV Export
+// Test 2: Parsing OpenAI Responses API output (both output_text and output -> message -> content[0].text)
+const mockApiOutput = {
+  output: [
+    { type: 'file_search_call', id: 'fs_123' },
+    {
+      type: 'message',
+      content: [
+        {
+          type: 'output_text',
+          text: JSON.stringify({
+            results: [
+              {
+                id: 'fiqh_1',
+                term: 'الابتهال',
+                dictionaryId: 'fiqhi_main',
+                page: 11,
+                short_meaning: 'التضرع والدعاء بإخلاص، ويحال فيه إلى لفظ التعوذ.',
+                source: 'الاصطلاحات الفقهية'
+              }
+            ],
+            message: 'تم العثور على مصطلح مطابق'
+          })
+        }
+      ]
+    }
+  ],
+  usage: {
+    input_tokens: 310,
+    output_tokens: 95,
+    total_tokens: 405
+  }
+};
+
+const parsed = parseOpenAiResponsesOutput(mockApiOutput);
+console.assert(parsed.results.length === 1 && parsed.results[0].term === 'الابتهال', 'Output parsing failed');
+console.log('✅ Test 2 passed: OpenAI Responses API output parsing verified.');
+
+// Test 3: Matching suggested card with full local dictionary entry
+const fullMatch = findFullEntryInDictionaries(allDictionaries, parsed.results[0]);
+console.assert(fullMatch && fullMatch.entry.id === 'fiqh_1', 'Full entry local lookup failed');
+console.log(`✅ Test 3 passed: Local dictionary lookup found "${fullMatch.entry.term}" -> "${fullMatch.entry.definition}"`);
+
+// Test 4: Benchmark logs & stats (ai_search_benchmarks.json)
 const sampleLogs = [
   {
-    timestamp: '2026-10-17 15:00:00',
-    provider: 'Google Gemini',
-    model: 'gemini-2.5-flash',
-    dictionaryScope: 'auto',
-    query: 'ما هو الابتهال',
-    candidatesSent: [{ term: 'الابتهال' }],
-    responseTimeSec: 1.2,
-    tokens: 420,
-    rating: 'جيد',
-    note: 'ممتاز',
-    answer: 'الابتهال هو...',
-    systemPrompt: 'افتراضي'
-  },
-  {
-    timestamp: '2026-10-17 15:05:00',
+    timestamp: '2026-10-17 16:40:00',
     provider: 'OpenAI',
     model: 'gpt-4o-mini',
-    dictionaryScope: 'auto',
-    query: 'ما هو الابتهال',
-    candidatesSent: [{ term: 'الابتهال' }],
-    responseTimeSec: 1.8,
-    tokens: 510,
-    rating: 'سيء',
-    note: '',
-    answer: '...',
-    systemPrompt: 'افتراضي'
+    vectorStoreId: DEFAULT_VECTOR_STORE_ID,
+    systemPrompt: DEFAULT_SYSTEM_PROMPT,
+    query: 'الابتهال',
+    results: parsed.results,
+    inputTokens: 310,
+    outputTokens: 95,
+    totalTokens: 405,
+    responseTimeSec: 1.35,
+    rating: 'جيد'
+  },
+  {
+    timestamp: '2026-10-17 16:42:00',
+    provider: 'OpenAI',
+    model: 'gpt-4o',
+    vectorStoreId: DEFAULT_VECTOR_STORE_ID,
+    systemPrompt: DEFAULT_SYSTEM_PROMPT,
+    query: 'الابتهال',
+    results: parsed.results,
+    inputTokens: 320,
+    outputTokens: 100,
+    totalTokens: 420,
+    responseTimeSec: 2.1,
+    rating: 'سيء'
   }
 ];
-const stats = computeBenchmarkStats(sampleLogs);
-console.assert(stats.bestAccuracyModel.model === 'gemini-2.5-flash', 'Benchmark stats failed');
-const csv = convertLogsToCsv(sampleLogs);
-console.assert(csv.includes('gemini-2.5-flash'), 'CSV export failed');
-console.log(`📊 Benchmark Analytics & CSV verified -> Best model: ${stats.bestAccuracyModel.model} (${stats.bestAccuracyModel.goodRate}%)`);
 
-console.log('🎉 All AI RAG & Benchmarking tests passed with zero errors!');
+const stats = computeBenchmarkStats(sampleLogs);
+console.assert(stats.bestAccuracyModel.model === 'gpt-4o-mini', 'Stats calculation failed');
+const csv = convertLogsToCsv(sampleLogs);
+console.assert(csv.includes('vs_6ad37a3dabac81918cc341f5c2bd0d02'), 'CSV export missing vectorStoreId');
+console.log(
+  `✅ Test 4 passed: Benchmark analytics verified -> Best model: ${stats.bestAccuracyModel.model} (${stats.bestAccuracyModel.goodRate}%)`
+);
+
+console.log('🎉 All OpenAI Responses API + Vector Store RAG tests passed!');
