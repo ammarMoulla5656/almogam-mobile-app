@@ -11,18 +11,12 @@ import { normalizeArabic, smartSearchEntries } from './smartSearch.js';
 
 export const DEFAULT_VECTOR_STORE_ID = 'vs_6ad37a3dabac81918cc341f5c2bd0d02';
 
-export const DEFAULT_SYSTEM_PROMPT = `أنت محرك بحث معجمي مقيد. مهمتك الوحيدة هي فهم سؤال المستخدم (سواء كان باللهجة العامية العراقية أو الفصحى) واستخراج المصطلحات المطابقة له حصراً من ملفات المعجم في أداة file_search.
-الحدود الصارمة للعمل:
-1. ممنوع الشرح الطويل أو الإفتاء أو إضافة أي حرف من خارج المعجم.
-2. إذا وجدت في النص عبارة إحالة مثل (راجع كذا)، ابحث عن المصطلح المحال إليه واستخرج معناه.
-3. أرجع النتيجة دائماً بصيغة JSON فقط بدون أي نص خارجه، وتحتوي على قائمة (results) بحد أقصى 5 مصطلحات ليختار المستخدم منها، وكل عنصر يحتوي على:
-- id: معرف الكلمة في المعجم إن وجد (مثل fiqh_647) أو اتركه فارغاً.
-- term: اسم المصطلح الدقيق كما ورد في المعجم.
-- dictionaryId: نوع المعجم (مثلاً: fiqhi_main).
-- page: رقم الصفحة.
-- short_meaning: ملخص مكثف جداً للمعنى من نص المعجم لا يتجاوز 20 كلمة يوضح للمستخدم لماذا هذا المصطلح يطابق سؤاله.
-- source: المصدر المذكور بين الأقواس باختصار.
-إذا لم تجد أي مصطلح مطابق في المعجم، أرجع مصفوفة results فارغة مع رسالة قصيرة في حقل message.`;
+export const DEFAULT_SYSTEM_PROMPT = `أنت محرك بحث معجمي فقهي مقتصد بالتوكنات. استخرج المصطلحات المطابقة لسؤال المستخدم من أداة file_search حصراً.
+القواعد الصارمة:
+1. لتوفير التوكنات: استدعِ file_search مرة واحدة فقط وباستعلام واحد قصير (Query واحد فقط يجمع أهم 3 كلمات مفتاحية معجمية بدون تكرار استعلامات).
+2. استخرج فقط المصطلحات الحقيقية الظاهرة في نتائج البحث (من 1 إلى 5 مصطلحات كحد أقصى). ممنوع تأليف مصطلح أو تخمين id أو وضع page: 0.
+3. انسخ (id, term, dictionaryId, page, source) حرفياً من النص، واجعل short_meaning ملخصاً من النص لا يتجاوز 15 كلمة.
+4. أرجع JSON فقط مطابقاً للمخطط.`;
 
 export const AI_PROVIDERS = [
   {
@@ -93,17 +87,17 @@ export const GEMINI_INTERACTIONS_SCHEMA = {
       items: {
         type: 'object',
         properties: {
-          id: { type: 'string', description: 'معرف الكلمة في المعجم إن وجد مثل fiqh_647' },
-          term: { type: 'string', description: 'اسم المصطلح الدقيق كما ورد في المعجم' },
-          dictionaryId: { type: 'string', description: 'نوع المعجم مثل fiqhi_main' },
-          page: { type: 'integer', description: 'رقم الصفحة' },
-          short_meaning: { type: 'string', description: 'ملخص مكثف جداً للمعنى من نص المعجم لا يتجاوز 20 كلمة' },
-          source: { type: 'string', description: 'المصدر المذكور بين الأقواس باختصار' }
+          id: { type: 'string' },
+          term: { type: 'string' },
+          dictionaryId: { type: 'string' },
+          page: { type: 'integer' },
+          short_meaning: { type: 'string' },
+          source: { type: 'string' }
         },
         required: ['id', 'term', 'dictionaryId', 'page', 'short_meaning', 'source']
       }
     },
-    message: { type: 'string', description: 'رسالة قصيرة توضيحية' }
+    message: { type: 'string' }
   },
   required: ['results', 'message']
 };
@@ -134,13 +128,14 @@ export function normalizeGeminiModelName(model) {
 
 /**
  * بناء جسم الطلب القياسي لـ OpenAI Responses API مع أداة file_search و json_schema
+ * مع تفعيل max_tool_calls: 1 لمنع تكرار البحث ومضاعفة التوكنات
  */
 export function buildOpenAiResponsesRequestBody({
   model,
   instructions,
   userQuery,
   vectorStoreIds,
-  maxNumResults = 5,
+  maxNumResults = 2,
   scopeFilter = 'all'
 }) {
   const validStoreIds = (Array.isArray(vectorStoreIds) ? vectorStoreIds : [vectorStoreIds])
@@ -162,12 +157,13 @@ export function buildOpenAiResponsesRequestBody({
     model: (model || 'gpt-4o-mini').trim(),
     instructions: instructions || DEFAULT_SYSTEM_PROMPT,
     input: `${userQuery}${scopeHint}`,
-    max_output_tokens: 450,
+    max_output_tokens: 350,
+    max_tool_calls: 1,
     tools: [
       {
         type: 'file_search',
         vector_store_ids: validStoreIds,
-        max_num_results: Number(maxNumResults) || 5
+        max_num_results: Number(maxNumResults) || 2
       }
     ],
     text: {

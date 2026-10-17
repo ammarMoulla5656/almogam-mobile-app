@@ -103,7 +103,7 @@ const DEFAULT_AI_CONFIG = {
   },
   vectorStoreId: DEFAULT_VECTOR_STORE_ID,
   extraVectorStoreIds: '',
-  maxNumResults: 5,
+  maxNumResults: 2,
   systemPrompt: DEFAULT_SYSTEM_PROMPT
 };
 
