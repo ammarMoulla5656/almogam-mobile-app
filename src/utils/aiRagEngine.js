@@ -1,7 +1,6 @@
 /**
  * محرك البحث الدلالي السحابي والمحلي:
  * 1. OpenAI Responses API (/v1/responses) مع أداة file_search ومخزن المتجهات Vector Store:
- *    vs_6ad393307d888191a09a70af30752080
  * 2. Google Gemini Interactions API الرسمية (https://generativelanguage.googleapis.com/v1beta/interactions)
  *    وفق التوثيق الرسمي (https://ai.google.dev/gemini-api/docs/get-started) والنماذج المعتمدة:
  *    gemini-3.8-flash, gemini-3.5-flash-lite, gemini-4-argon, gemini-3.6-flash, gemini-3.1-flash-lite, gemini-3.1-pro-preview, gemini-3-flash-preview
@@ -9,7 +8,7 @@
 
 import { normalizeArabic, smartSearchEntries } from './smartSearch.js';
 
-export const DEFAULT_VECTOR_STORE_ID = 'vs_6ad393307d888191a09a70af30752080';
+export const DEFAULT_VECTOR_STORE_ID = '';
 
 export const DEFAULT_SYSTEM_PROMPT = `أنت محرك بحث معجمي فقهي سريع. مهمتك فهم سؤال المستخدم بالعامية أو الفصحى واستخراج 5 مصطلحات من أداة file_search.
 
@@ -142,10 +141,6 @@ export function buildOpenAiResponsesRequestBody({
   const validStoreIds = (Array.isArray(vectorStoreIds) ? vectorStoreIds : [vectorStoreIds])
     .map((s) => String(s || '').trim())
     .filter(Boolean);
-
-  if (validStoreIds.length === 0) {
-    validStoreIds.push(DEFAULT_VECTOR_STORE_ID);
-  }
 
   const scopeHint =
     scopeFilter && scopeFilter !== 'all'
@@ -400,7 +395,7 @@ export async function executeCloudSemanticSearch({
   provider = 'openai',
   model = 'gpt-4o-mini',
   apiKey = '',
-  vectorStoreIds = [DEFAULT_VECTOR_STORE_ID],
+  vectorStoreIds = [],
   maxNumResults = 8,
   systemPrompt = DEFAULT_SYSTEM_PROMPT,
   userQuery = '',
@@ -439,7 +434,7 @@ export async function executeCloudSemanticSearch({
     }
 
     const parsed = parseOpenAiResponsesOutput(data);
-    const reconciledResults = reconcileResultsWithDictionaries(parsed.results, allDictionaries);
+    const reconciledResults = reconcileResultsWithDictionaries(parsed.results, allDictionaries, scopeFilter);
     const usage = data?.usage || {};
     const inputTokens = usage.input_tokens || 0;
     const outputTokens = usage.output_tokens || 0;
@@ -492,7 +487,7 @@ export async function executeCloudSemanticSearch({
     }
 
     const parsed = parseGeminiInteractionsOutput(data);
-    const reconciledResults = reconcileResultsWithDictionaries(parsed.results, allDictionaries);
+    const reconciledResults = reconcileResultsWithDictionaries(parsed.results, allDictionaries, scopeFilter);
     const usage = data?.usage || {};
     const inputTokens = usage.total_input_tokens || usage.input_tokens || 0;
     const outputTokens = usage.total_output_tokens || usage.output_tokens || 0;
@@ -567,7 +562,7 @@ export async function executeCloudSemanticSearch({
   }
 
   const parsed = parseOpenAiResponsesOutput({ output_text: rawText });
-  const reconciledResults = reconcileResultsWithDictionaries(parsed.results, allDictionaries);
+  const reconciledResults = reconcileResultsWithDictionaries(parsed.results, allDictionaries, scopeFilter);
   const elapsedSeconds = Number(((performance.now() - startTime) / 1000).toFixed(2));
 
   return {
@@ -593,64 +588,38 @@ export function findFullEntryInDictionaries(allDictionaries, cardItem) {
   const targetId = String(cardItem.id || '').trim();
   const targetTermNorm = normalizeArabic(cardItem.term || '');
   const targetTermBare = stripLeadingAl(targetTermNorm);
-
-  // ترتيب المعاجم بحيث نبدأ بالمعجم المحدد في البطاقة إن وجد
-  const orderedDicts = [...allDictionaries].sort((a, b) => {
-    if (a.id === cardItem.dictionaryId) return -1;
-    if (b.id === cardItem.dictionaryId) return 1;
-    return 0;
-  });
+  // بطاقة الذكاء الاصطناعي يجب أن تُطابق داخل معجمها فقط؛ البحث في المعاجم
+  // الأخرى قد يفتح تعريفاً فقهياً لنتيجة أصولية لمجرد تشابه كلمة عامة.
+  const requestedDictId = String(cardItem.dictionaryId || '').trim();
+  const dict = allDictionaries.find((candidate) => candidate.id === requestedDictId);
+  if (!dict) return null;
+  const entries = dict.preparedEntries || dict.entries || [];
+  const normTerm = (entry) => entry._normTerm || normalizeArabic(entry.term);
 
   // 1. البحث أولاً بتطابق اسم المصطلح الدقيق (مع أو بدون "ال" التعريف)
   if (targetTermNorm) {
-    for (const dict of orderedDicts) {
-      const entries = dict.preparedEntries || dict.entries || [];
-      const exact = entries.find((e) => {
-        const eNorm = e._normTerm || normalizeArabic(e.term);
-        return eNorm === targetTermNorm || (targetTermBare.length >= 2 && stripLeadingAl(eNorm) === targetTermBare);
-      });
-      if (exact) return { entry: exact, dict };
-    }
+    const exact = entries.find((e) => {
+      const eNorm = normTerm(e);
+      return eNorm === targetTermNorm || (targetTermBare.length >= 2 && stripLeadingAl(eNorm) === targetTermBare);
+    });
+    if (exact) return { entry: exact, dict };
+
+    // يقبل العنوان الأصلي إذا كان عبارة أطول من اسم المصطلح، مثل
+    // "استصحاب الحكم الشرعي" مقابل مدخل "الاستصحاب".
+    const contained = entries
+      .filter((e) => {
+        const eNorm = normTerm(e);
+        const eBare = stripLeadingAl(eNorm);
+        return eBare.length >= 4 && targetTermBare.includes(eBare);
+      })
+      .sort((a, b) => normTerm(b).length - normTerm(a).length)[0];
+    if (contained) return { entry: contained, dict };
   }
 
   // 2. البحث بواسطة id فقط إذا لم يكن هناك اسم مصطلح أو كان اسم المصطلح متطابقاً جزئياً مع العنصر
   if (targetId) {
-    for (const dict of orderedDicts) {
-      const foundById = (dict.preparedEntries || dict.entries || []).find((e) => e.id === targetId);
-      if (foundById) {
-        if (!targetTermNorm) return { entry: foundById, dict };
-        const foundNorm = foundById._normTerm || normalizeArabic(foundById.term);
-        if (
-          foundNorm === targetTermNorm ||
-          stripLeadingAl(foundNorm) === targetTermBare ||
-          foundNorm.includes(targetTermNorm) ||
-          targetTermNorm.includes(foundNorm)
-        ) {
-          return { entry: foundById, dict };
-        }
-      }
-    }
-  }
-
-  // 3. البحث الجزئي باسم المصطلح ككلمة مستقلة (مثلاً "الشك" يطابق "يوم الشك")
-  if (targetTermNorm && targetTermBare.length >= 2) {
-    for (const dict of orderedDicts) {
-      const entries = dict.preparedEntries || dict.entries || [];
-      const wordMatch = entries.find((e) => {
-        const eNorm = e._normTerm || normalizeArabic(e.term);
-        const words = eNorm.split(' ');
-        return words.some((w) => w === targetTermNorm || stripLeadingAl(w) === targetTermBare);
-      });
-      if (wordMatch) return { entry: wordMatch, dict };
-    }
-    for (const dict of orderedDicts) {
-      const entries = dict.preparedEntries || dict.entries || [];
-      const partial = entries.find((e) => {
-        const eNorm = e._normTerm || normalizeArabic(e.term);
-        return eNorm.includes(targetTermNorm) || targetTermNorm.includes(eNorm);
-      });
-      if (partial) return { entry: partial, dict };
-    }
+    const foundById = entries.filter((e) => e.id === targetId);
+    if (!targetTermNorm && foundById.length === 1) return { entry: foundById[0], dict };
   }
 
   return null;
@@ -659,30 +628,32 @@ export function findFullEntryInDictionaries(allDictionaries, cardItem) {
 /**
  * تصحيح ومطابقة نتائج الذكاء الاصطناعي مع المعجم المحلي لضمان دقة (id, page, source) عند الضغط على أي بطاقة
  */
-export function reconcileResultsWithDictionaries(results, allDictionaries) {
+export function reconcileResultsWithDictionaries(results, allDictionaries, scopeFilter = 'all') {
   if (!Array.isArray(results)) return [];
   if (!Array.isArray(allDictionaries) || allDictionaries.length === 0) return results;
 
   return results.map((item) => {
     const matched = findFullEntryInDictionaries(allDictionaries, item);
+    if (scopeFilter !== 'all' && item.dictionaryId !== scopeFilter) return null;
     if (!matched) return item;
     const realEntry = matched.entry;
     const realDict = matched.dict;
-    const rawSource = String(item.source || '').trim();
-    const cleanSource =
-      !rawSource || rawSource.endsWith('.json')
-        ? (realEntry.sources || [])[0] || realDict.category || rawSource
-        : rawSource;
+    const entrySources = Array.isArray(realEntry.sources)
+      ? realEntry.sources
+      : realEntry.sources
+        ? [realEntry.sources]
+        : [];
+    const cleanSource = entrySources[0] || '';
 
     return {
       ...item,
       id: realEntry.id,
       term: realEntry.term,
       dictionaryId: realDict.id,
-      page: realEntry.page || item.page || 1,
+      page: realEntry.page || null,
       source: cleanSource
     };
-  });
+  }).filter(Boolean);
 }
 
 /**

@@ -1,3 +1,15 @@
 node_modules/
 .DS_Store
 *.log
+__pycache__/
+*.pyc
+dist/
+worker/.dev.vars
+worker/.dev.vars.*
+
+
+almogam-github-ready.zip
+non_app_files/
+.gradle-cache/
+*.apk
+kitab_al_ayn_part*.json

@@ -1,6 +1,6 @@
 {
   "appId": "com.almogam.fiqhi.app",
-  "appName": "المعجم",
+  "appName": "تطبيق المعجم - المعجم الفقهي واللغوي",
   "webDir": "dist",
   "bundledWebRuntime": false,
   "server": {

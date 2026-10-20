@@ -23,10 +23,13 @@ jobs:
           distribution: 'temurin'
           java-version: '21'
 
-      - name: Install dependencies & sync Capacitor Android
+      - name: Install dependencies and build the offline web app
         run: |
-          npm install
-          python3 build_dist.py
+          npm ci
+          npm run build
+
+      - name: Sync Capacitor Android
+        run: |
           npx cap sync android
 
       - name: Build Android APK

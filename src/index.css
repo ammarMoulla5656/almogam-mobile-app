@@ -4,9 +4,14 @@
 
 @layer base {
   html {
-    font-family: 'Tajawal', system-ui, -apple-system, sans-serif;
+    font-family: Tahoma, Arial, sans-serif;
     -webkit-tap-highlight-color: transparent;
   }
+
+}
+
+.font-serif {
+  font-family: Tahoma, Arial, sans-serif;
 }
 
 /* Custom sleek scrollbar */
