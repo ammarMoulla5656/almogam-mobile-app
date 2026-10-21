@@ -49,6 +49,7 @@ const AI_MAX_RESULTS = 5;
 const AI_SEARCH_RESULTS = 15;
 const countSearchLetters = (value) => (String(value || '').normalize('NFC').match(/\p{L}/gu) || []).length;
 const countSearchCharacters = (value) => Array.from(String(value || '')).length;
+const cleanDisplayedText = (value) => String(value || '').replace(/\\r\\n|\\n|\\r/g, ' ').replace(/[ \t]{2,}/g, ' ').trim();
 
 const ARABIC_CHAPTERS = [
   { letter: 'الكل', short: 'الكل' },
@@ -144,10 +145,25 @@ export default function App() {
     }));
   }, []);
   const dictionaryTermLookups = useMemo(
-    () => new Map(allDictionaries.map((dict) => [
-      dict.id,
-      new Map(dict.preparedEntries.map((entry) => [entry._normTerm, entry]))
-    ])),
+    () => new Map(allDictionaries.map((dict) => {
+      const lookup = new Map();
+      const aliasMatches = new Map();
+      for (const entry of dict.preparedEntries) {
+        const termKey = entry._normTerm || normalizeArabic(entry.term);
+        if (termKey && !lookup.has(termKey)) lookup.set(termKey, entry);
+        for (const alias of entry.aliases || []) {
+          const aliasKey = normalizeArabic(alias);
+          if (!aliasKey || lookup.has(aliasKey)) continue;
+          const matches = aliasMatches.get(aliasKey) || new Map();
+          matches.set(entry.id, entry);
+          aliasMatches.set(aliasKey, matches);
+        }
+      }
+      for (const [aliasKey, matches] of aliasMatches) {
+        if (matches.size === 1 && !lookup.has(aliasKey)) lookup.set(aliasKey, matches.values().next().value);
+      }
+      return [dict.id, lookup];
+    })),
     [allDictionaries]
   );
 
@@ -493,7 +509,7 @@ export default function App() {
       onlyBookmarks: activeTab === 'bookmarks',
       bookmarksSet
     });
-    if (pinnedEntryId && searchQuery.trim()) {
+    if (pinnedEntryId) {
       const pinned =
         results.find((e) => e.id === pinnedEntryId) ||
         currentDict.preparedEntries.find((e) => e.id === pinnedEntryId);
@@ -548,7 +564,8 @@ export default function App() {
 
   const extractCrossReferences = useCallback((definition, dictionary) => {
     if (!definition || !dictionary?.preparedEntries) return [];
-    const referencePattern = /(أنظر|انظر|راجع|يراجع)\s*(?:ما\s+(?:يأتي|سبق)\s+(?:(?:أيضا|أيضاً)\s+)?(?:في\s+)?)?(?:(?:في|إلى|الى)\s+)?(?:مادة|لفظ|كلمة|باب)?\s*[:：]?\s*[«"(\[]?\s*([^»")\].،؛:؛.!؟\n]{1,36})/g;
+    definition = cleanDisplayedText(definition);
+    const referencePattern = /(أنظر|انظر|راجع|يراجع|ينظر)\s*(?:(?:أيضا|أيضاً)\s+)?(?:ما\s+(?:يأتي|سبق)\s+(?:(?:أيضا|أيضاً)\s+)?(?:في\s+)?)?(?:(?:في|إلى|الى)\s+)?(?:مادة|لفظ|كلمة|باب)?\s*[:：]?\s*[«"(\[]?\s*([^»")\].،؛:؛.!؟\n]{1,80})/g;
     const entriesByTerm = dictionaryTermLookups.get(dictionary.id);
     if (!entriesByTerm) return [];
     const references = [];
@@ -600,8 +617,6 @@ export default function App() {
 
       setSelectedLetter('الكل');
       setActiveTab('dictionary');
-      setSearchQuery(cleaned);
-
       if (targetEntry) {
         setPinnedEntryId(targetEntry.id);
         setExpandedIds(new Set([targetEntry.id]));
@@ -614,10 +629,9 @@ export default function App() {
       setAiSheetOpen(false);
 
       if (typeof window !== 'undefined') {
-        window.scrollTo({ top: 0, behavior: 'smooth' });
         setTimeout(() => {
-          window.scrollTo({ top: 0, behavior: 'smooth' });
-        }, 60);
+          document.getElementById(`entry-card-${targetEntry?.id || entryId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }, 100);
       }
 
       showToast(targetEntry ? `عرض: ${targetEntry.term}` : `عرض: ${cleaned}`);
@@ -712,7 +726,7 @@ export default function App() {
                     style={{ fontSize: currentFont.defSize, lineHeight: currentFont.lineHeight }}
                     className="font-serif text-slate-800 dark:text-slate-100 bg-white dark:bg-slate-950/80 p-4 rounded-2xl border border-slate-200/70 dark:border-slate-800 shadow-inner"
                   >
-                    {entry.definition}
+                    {cleanDisplayedText(entry.definition)}
                   </p>
 
                   <div className="flex flex-wrap items-center gap-2 mt-3 mb-4">
@@ -738,6 +752,7 @@ export default function App() {
                 </div>
               )}
             </div>
+
           );
         })}
 
@@ -783,6 +798,16 @@ export default function App() {
               })}
             </div>
 
+            <div className="flex justify-center">
+              <div className="inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-4 py-1.5 text-xs font-bold text-teal-50 shadow-inner">
+                <BookOpen className="h-4 w-4 text-amber-200" />
+                <span>{currentDict.category}</span>
+                <span className="rounded-full bg-white px-2.5 py-0.5 text-teal-900 tabular-nums">
+                  {currentDict.entries.length.toLocaleString('ar-IQ')} معنى
+                </span>
+              </div>
+            </div>
+
             <div className="space-y-1">
               <div className="relative flex items-center">
                 <Search className="w-5 h-5 text-teal-200 absolute right-4 pointer-events-none" />
@@ -811,17 +836,6 @@ export default function App() {
               {searchQuery && <div className="text-[11px] text-teal-100/90 px-2">عدد الأحرف: {countSearchLetters(searchQuery)}</div>}
             </div>
 
-            {selectedLetter !== 'الكل' && (
-              <div className="flex items-center justify-between bg-amber-400 text-slate-950 px-4 py-2 rounded-xl text-sm font-extrabold">
-                <span>التصفح الحالي: باب حرف {selectedLetter}</span>
-                <button
-                  onClick={() => setSelectedLetter('الكل')}
-                  className="px-2.5 py-0.5 rounded-lg bg-slate-950/15 text-xs"
-                >
-                  إلغاء الفلتر ✕
-                </button>
-              </div>
-            )}
           </div>
         </header>
       )}
@@ -1132,7 +1146,7 @@ export default function App() {
                           </div>
 
                           <p className="text-sm text-slate-700 dark:text-slate-200 font-bold leading-relaxed line-clamp-2">
-                            {item.short_meaning}
+                            {cleanDisplayedText(item.short_meaning)}
                           </p>
 
                           <div className="flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400 pt-1 border-t border-slate-100 dark:border-slate-700/60">
@@ -1230,7 +1244,7 @@ export default function App() {
                 style={{ fontSize: currentFont.defSize, lineHeight: currentFont.lineHeight }}
                 className="font-serif text-slate-900 dark:text-slate-100 bg-slate-50 dark:bg-slate-950 p-4 rounded-2xl border border-slate-200 dark:border-slate-800"
               >
-                {selectedFullEntryModal.entry.definition}
+                {cleanDisplayedText(selectedFullEntryModal.entry.definition)}
               </div>
 
               <div className="flex flex-wrap gap-2 text-xs font-extrabold">

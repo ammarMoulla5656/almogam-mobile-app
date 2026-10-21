@@ -13,3 +13,5 @@ non_app_files/
 .gradle-cache/
 *.apk
 kitab_al_ayn_part*.json
+*.msi
+/Meaning*.json

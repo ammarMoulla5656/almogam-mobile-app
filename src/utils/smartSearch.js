@@ -98,7 +98,7 @@ const SEMANTIC_EXPANSIONS = {
 export function prepareEntryForSearch(entry) {
   const normTerm = normalizeArabic(entry.term);
   const stemTerm = normTerm.split(' ').map(stemArabicWord).join(' ');
-  const normDef = normalizeArabic(entry.definition);
+  const normDef = normalizeArabic([entry.definition, ...(entry.aliases || [])].join(' '));
   const normSources = normalizeArabic((entry.sources || []).join(' '));
   return {
     ...entry,

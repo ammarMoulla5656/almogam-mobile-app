@@ -13,7 +13,7 @@ await mkdir(outputDir, { recursive: true });
 for (const [input, output, label] of sources) {
   const dictionary = JSON.parse(await readFile(resolve(root, 'database/processed', input), 'utf8'));
   const body = dictionary.entries.map((entry) =>
-    `${label}\nالمصطلح: ${entry.term}\nالتعريف: ${entry.definition}`
+    `${label}\nالمصطلح: ${entry.term}${entry.aliases?.length ? `\nصيغ أخرى: ${entry.aliases.join('، ')}` : ''}\nالتعريف: ${entry.definition}`
   ).join('\n\n');
   await writeFile(resolve(outputDir, output), `${body}\n`, 'utf8');
   console.log(`${output}: ${dictionary.entries.length} entries`);

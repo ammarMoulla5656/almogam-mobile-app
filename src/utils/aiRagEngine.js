@@ -604,6 +604,12 @@ export function findFullEntryInDictionaries(allDictionaries, cardItem) {
     });
     if (exact) return { entry: exact, dict };
 
+    const aliasMatches = entries.filter((entry) => (entry.aliases || []).some((alias) => {
+      const aliasNorm = normalizeArabic(alias);
+      return aliasNorm === targetTermNorm || stripLeadingAl(aliasNorm) === targetTermBare;
+    }));
+    if (aliasMatches.length === 1) return { entry: aliasMatches[0], dict };
+
     // يقبل العنوان الأصلي إذا كان عبارة أطول من اسم المصطلح، مثل
     // "استصحاب الحكم الشرعي" مقابل مدخل "الاستصحاب".
     const contained = entries
