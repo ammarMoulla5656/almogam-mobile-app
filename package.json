@@ -7,7 +7,9 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "android:sync": "npx cap sync android"
+    "android:sync": "npx cap sync android",
+    "data:sqlite": "python scripts/build_dictionary_sqlite.py",
+    "data:vector": "node scripts/prepare_vector_upload.mjs"
   },
   "dependencies": {
     "@capacitor/android": "^6.1.2",
@@ -18,7 +20,8 @@
     "@capacitor/share": "^6.0.1",
     "lucide-react": "^0.454.0",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react-dom": "^18.3.1",
+    "sql.js": "^1.15.1"
   },
   "devDependencies": {
     "@capacitor/cli": "^6.1.2",

@@ -23,10 +23,8 @@ import {
   Plus,
   Trash2
 } from 'lucide-react';
-import fiqhiDictionary from '../database/processed/unified_fiqhi.json';
-import usuliDictionary from '../database/processed/unified_usuli.json';
-import lughawiDictionary from '../database/processed/unified_lughawi.json';
 import { normalizeArabic, prepareEntryForSearch, smartSearchEntries } from './utils/smartSearch.js';
+import { loadDictionaryPreviews, loadDictionaryFromSqlite, searchDictionarySqlite } from './data/sqliteDictionaries.js';
 import {
   getDictionaryLabel,
   retrieveLocalCandidates,
@@ -43,13 +41,18 @@ const STORAGE_KEYS = {
 };
 
 const AI_API_URL = window.ALMOGAM_AI_API_URL || import.meta.env.VITE_AI_API_URL || '';
-const AI_MODEL = 'gpt-4o-mini';
+const AI_MODEL = 'gpt-5.6-luna';
 const AI_MAX_CHARS = 50;
 const AI_MAX_RESULTS = 5;
-const AI_SEARCH_RESULTS = 15;
+const AI_SEARCH_RESULTS = 20;
 const countSearchLetters = (value) => (String(value || '').normalize('NFC').match(/\p{L}/gu) || []).length;
 const countSearchCharacters = (value) => Array.from(String(value || '')).length;
 const cleanDisplayedText = (value) => String(value || '').replace(/\\r\\n|\\n|\\r/g, ' ').replace(/[ \t]{2,}/g, ' ').trim();
+const DICTIONARY_METADATA = [
+  { id: 'fiqhi_main', category: 'المعجم الفقهي', entryCount: 6987 },
+  { id: 'usuli_dict', category: 'المعجم الأصولي', entryCount: 628 },
+  { id: 'lughawi_dict', category: 'المعجم اللغوي', entryCount: 12711 }
+];
 
 const ARABIC_CHAPTERS = [
   { letter: 'الكل', short: 'الكل' },
@@ -138,12 +141,11 @@ export default function App() {
     });
   }, []);
 
-  const allDictionaries = useMemo(() => {
-    return [fiqhiDictionary, usuliDictionary, lughawiDictionary].map((d) => ({
-      ...d,
-      preparedEntries: d.entries.map(prepareEntryForSearch)
-    }));
-  }, []);
+  const [loadedDictionaries, setLoadedDictionaries] = useState({});
+  const dictionaryLoadPromises = useRef(new Map());
+  const allDictionaries = useMemo(() => DICTIONARY_METADATA.map((metadata) =>
+    loadedDictionaries[metadata.id] || { ...metadata, entries: [], preparedEntries: [] }
+  ), [loadedDictionaries]);
   const dictionaryTermLookups = useMemo(
     () => new Map(allDictionaries.map((dict) => {
       const lookup = new Map();
@@ -197,10 +199,12 @@ export default function App() {
   const [aiQuery, setAiQuery] = useState('');
   const [aiLoading, setAiLoading] = useState(false);
   const [aiResult, setAiResult] = useState(null);
+  const aiSheetContentRef = useRef(null);
   const [aiError, setAiError] = useState(null);
   const [manualTermInput, setManualTermInput] = useState('');
   const [feedbackGiven, setFeedbackGiven] = useState(null); // 'good' | 'bad'
   const [selectedFullEntryModal, setSelectedFullEntryModal] = useState(null); // { entry, dict, aiCard }
+  const [referenceModalStack, setReferenceModalStack] = useState([]);
   const [showStatsModal, setShowStatsModal] = useState(false);
 
   const handleRunAiSearch = async () => {
@@ -217,9 +221,11 @@ export default function App() {
     setAiError(null);
     setAiResult(null);
     setFeedbackGiven(null);
-    const buildLocalResult = () => {
+    const buildLocalResult = async () => {
+      const dictionaryIds = aiScope === 'all' ? DICTIONARY_METADATA.map((item) => item.id) : [aiScope];
+      const dictionariesForSearch = await Promise.all(dictionaryIds.map(loadDictionary));
       const candidates = retrieveLocalCandidates(
-        allDictionaries,
+        dictionariesForSearch,
         query,
         aiScope,
         AI_MAX_RESULTS
@@ -245,7 +251,7 @@ export default function App() {
 
     try {
       if (!navigator.onLine || !AI_API_URL) {
-        const localResult = buildLocalResult();
+        const localResult = await buildLocalResult();
         setAiResult({
           ...localResult,
           inputTokens: 0,
@@ -281,8 +287,37 @@ export default function App() {
         throw new Error(data.message || 'تعذر الاتصال بخدمة البحث الدلالي.');
       }
 
+      let cloudResults = Array.isArray(data.results) ? data.results : [];
+      if (aiScope !== 'all' && Array.isArray(data.candidateTerms)) {
+        const dictionary = await loadDictionary(aiScope);
+        const preparedEntries = dictionary.preparedEntries || [];
+        const verifiedCandidates = data.candidateTerms
+          .map((candidate) => {
+            const candidateTerm = normalizeArabic(candidate.term || '');
+            return preparedEntries.find((entry) => normalizeArabic(entry.term) === candidateTerm);
+          })
+          .filter(Boolean)
+          .filter((entry, index, entries) => entries.findIndex((item) => item.id === entry.id) === index);
+        if (verifiedCandidates.length) {
+          const candidateKeys = new Set(verifiedCandidates.map((entry) => normalizeArabic(entry.term)));
+          cloudResults = [
+            ...verifiedCandidates.map((entry) => ({
+              id: entry.id,
+              term: entry.term,
+              dictionaryId: aiScope,
+              page: 0,
+              short_meaning: (entry.definition || '').trim().split(/\s+/).slice(0, 15).join(' '),
+              source: ''
+            })),
+            ...cloudResults.filter((item) =>
+              item.dictionaryId !== aiScope || !candidateKeys.has(normalizeArabic(item.term))
+            )
+          ].slice(0, AI_MAX_RESULTS);
+        }
+      }
+
       setAiResult({
-        results: data.results || [],
+        results: cloudResults,
         message: data.message || '',
         inputTokens: data.inputTokens || 0,
         outputTokens: data.outputTokens || 0,
@@ -296,7 +331,7 @@ export default function App() {
         scope: aiScope
       });
     } catch (err) {
-      const localResult = buildLocalResult();
+      const localResult = await buildLocalResult();
       if (localResult.results.length > 0) {
         setAiResult({
           ...localResult,
@@ -330,9 +365,17 @@ export default function App() {
   };
 
   // إضافة مصطلح يدوياً لقائمة النتائج المقترحة قبل التقييم
-  const handleAddManualSuggestedCard = () => {
+  const handleAddManualSuggestedCard = async () => {
     if (!manualTermInput.trim() || !aiResult) return;
-    const matched = findFullEntryInDictionaries(allDictionaries, { term: manualTermInput.trim() });
+    const dictionaryIds = aiScope === 'all' ? DICTIONARY_METADATA.map((item) => item.id) : [aiScope];
+    let dictionariesForSearch;
+    try {
+      dictionariesForSearch = await Promise.all(dictionaryIds.map(loadDictionary));
+    } catch {
+      showToast('تعذر تحميل المعجم لإضافة المصطلح.');
+      return;
+    }
+    const matched = findFullEntryInDictionaries(dictionariesForSearch, { term: manualTermInput.trim() });
     const newCard = matched
       ? {
           id: matched.entry.id,
@@ -360,8 +403,15 @@ export default function App() {
   };
 
   // فتح التعريف الكامل والأصلي من المعجم المحلي عند الضغط على أي بطاقة مقترحة
-  const handleOpenSuggestedCardFullView = (cardItem) => {
-    const matched = findFullEntryInDictionaries(allDictionaries, cardItem);
+  const handleOpenSuggestedCardFullView = async (cardItem) => {
+    let dictionary;
+    try {
+      dictionary = await loadDictionary(cardItem.dictionaryId || 'fiqhi_main');
+    } catch {
+      showToast('تعذر تحميل المعجم لعرض التعريف.');
+      return;
+    }
+    const matched = findFullEntryInDictionaries([dictionary], cardItem);
     if (matched) {
       setSelectedFullEntryModal({
         entry: matched.entry,
@@ -380,7 +430,7 @@ export default function App() {
           sources: cardItem.source ? [cardItem.source] : []
         },
         dict:
-          allDictionaries.find((d) => d.id === cardItem.dictionaryId) || allDictionaries[0],
+          dictionary,
         aiCard: cardItem
       });
     }
@@ -469,6 +519,7 @@ export default function App() {
   const [selectedDictId, setSelectedDictId] = useState('fiqhi_main');
   const [selectedLetter, setSelectedLetter] = useState('الكل');
   const [searchQuery, setSearchQuery] = useState('');
+  const [committedSearchQuery, setCommittedSearchQuery] = useState('');
   const [pinnedEntryId, setPinnedEntryId] = useState(null);
   const [expandedIds, setExpandedIds] = useState(() => new Set(['fiqh_1']));
   const [visibleCount, setVisibleCount] = useState(12);
@@ -486,39 +537,187 @@ export default function App() {
     return allDictionaries.find((d) => d.id === selectedDictId) || allDictionaries[0];
   }, [allDictionaries, selectedDictId]);
 
+  const loadDictionary = useCallback((dictionaryId) => {
+    if (loadedDictionaries[dictionaryId]?.fullyLoaded) return Promise.resolve(loadedDictionaries[dictionaryId]);
+    const pending = dictionaryLoadPromises.current.get(dictionaryId);
+    if (pending) return pending;
+    const metadata = DICTIONARY_METADATA.find((item) => item.id === dictionaryId);
+    if (!metadata) return Promise.reject(new Error('المعجم المطلوب غير معروف.'));
+
+    const task = (async () => {
+      let entries = [];
+      let preparedEntries = [];
+      let lastPublishedCount = 0;
+      const dictionary = await loadDictionaryFromSqlite(
+        dictionaryId,
+        undefined,
+        (batch, total) => {
+          entries.push(...batch);
+          preparedEntries.push(...batch.map(prepareEntryForSearch));
+          if (lastPublishedCount === 0 || entries.length - lastPublishedCount >= 2000) {
+            lastPublishedCount = entries.length;
+            setLoadedDictionaries((previous) => ({
+              ...previous,
+              [dictionaryId]: {
+                ...metadata,
+                entries: entries.slice(),
+                preparedEntries: preparedEntries.slice(),
+                entryCount: total,
+                isLoading: true,
+                fullyLoaded: false
+              }
+            }));
+          }
+        }
+      );
+      const preparedDictionary = {
+        ...metadata,
+        ...dictionary,
+        entries,
+        preparedEntries,
+        entryCount: entries.length,
+        isLoading: false,
+        fullyLoaded: true
+      };
+      setLoadedDictionaries((previous) => ({ ...previous, [dictionaryId]: preparedDictionary }));
+      return preparedDictionary;
+    })().catch((error) => {
+      showToast('تعذر تحميل هذا المعجم. أعد المحاولة.');
+      throw error;
+    }).finally(() => dictionaryLoadPromises.current.delete(dictionaryId));
+
+    dictionaryLoadPromises.current.set(dictionaryId, task);
+    return task;
+  }, [loadedDictionaries, showToast]);
+
+  const loadDictionaryRef = useRef(loadDictionary);
+  loadDictionaryRef.current = loadDictionary;
+
+  useEffect(() => {
+    let cancelled = false;
+    const startBackgroundLoading = async () => {
+      try {
+        const previews = await loadDictionaryPreviews();
+        if (cancelled) return;
+        setLoadedDictionaries((previous) => {
+          const next = { ...previous };
+          for (const preview of previews) {
+            const metadata = DICTIONARY_METADATA.find((item) => item.id === preview.id);
+            if (!metadata || next[preview.id]?.fullyLoaded || next[preview.id]?.isLoading) continue;
+            next[preview.id] = {
+              ...metadata,
+              ...preview,
+              preparedEntries: preview.entries.map(prepareEntryForSearch),
+              isPreview: true,
+              fullyLoaded: false
+            };
+          }
+          return next;
+        });
+      } catch {
+        // The bundled SQLite data remains available if a small preview cannot be read.
+      }
+
+      await new Promise((resolve) => window.setTimeout(resolve, 5000));
+      for (const dictionary of DICTIONARY_METADATA) {
+        if (cancelled) return;
+        try {
+          await loadDictionaryRef.current(dictionary.id);
+        } catch {
+          // Keep the app usable and continue loading the other separate dictionaries.
+        }
+      }
+    };
+
+    startBackgroundLoading();
+    return () => { cancelled = true; };
+  }, []);
+
+  const hasCurrentDictionaryData = Boolean(loadedDictionaries[selectedDictId]?.preparedEntries.length);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setCommittedSearchQuery(searchQuery), 140);
+    return () => window.clearTimeout(timer);
+  }, [searchQuery]);
+
+  useEffect(() => {
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }, [committedSearchQuery]);
+
+  useEffect(() => {
+    if (aiSheetOpen && aiResult) aiSheetContentRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+  }, [aiResult, aiSheetOpen]);
+
   useEffect(() => {
     setVisibleCount(12);
   }, [searchQuery, selectedLetter, selectedDictId, activeTab]);
 
   useEffect(() => {
-    let previousY = window.scrollY;
-    const closeExpandedOnScrollUp = () => {
-      const currentY = window.scrollY;
-      if (currentY < previousY) setExpandedIds((current) => current.size ? new Set() : current);
-      previousY = currentY;
+    let frame = 0;
+    const closeExpandedAfterLeavingCard = () => {
+      if (frame || expandedIds.size === 0) return;
+      frame = window.requestAnimationFrame(() => {
+        frame = 0;
+        const margin = Math.max(260, Math.round(window.innerHeight * 0.35));
+        const allCardsFarAway = [...expandedIds].every((id) => {
+          const card = document.getElementById(`entry-card-${id}`);
+          if (!card) return true;
+          const rect = card.getBoundingClientRect();
+          return rect.bottom < -margin || rect.top > window.innerHeight + margin;
+        });
+        if (allCardsFarAway) setExpandedIds(new Set());
+      });
     };
-    window.addEventListener('scroll', closeExpandedOnScrollUp, { passive: true });
-    return () => window.removeEventListener('scroll', closeExpandedOnScrollUp);
-  }, []);
+    window.addEventListener('scroll', closeExpandedAfterLeavingCard, { passive: true });
+    return () => {
+      window.removeEventListener('scroll', closeExpandedAfterLeavingCard);
+      if (frame) window.cancelAnimationFrame(frame);
+    };
+  }, [expandedIds]);
 
-  const filteredEntries = useMemo(() => {
-    if (!currentDict) return [];
-    const results = smartSearchEntries(currentDict.preparedEntries, searchQuery, {
-      letterFilter: activeTab === 'home' ? 'الكل' : selectedLetter,
-      searchScope: 'all',
-      onlyBookmarks: activeTab === 'bookmarks',
-      bookmarksSet
-    });
-    if (pinnedEntryId) {
-      const pinned =
-        results.find((e) => e.id === pinnedEntryId) ||
-        currentDict.preparedEntries.find((e) => e.id === pinnedEntryId);
-      if (pinned) {
-        return [pinned, ...results.filter((e) => e.id !== pinnedEntryId)];
+  const [filteredEntries, setFilteredEntries] = useState([]);
+  useEffect(() => {
+    let cancelled = false;
+    const search = async () => {
+      if (!hasCurrentDictionaryData) {
+        setFilteredEntries([]);
+        return;
       }
-    }
-    return results;
-  }, [currentDict, searchQuery, selectedLetter, activeTab, bookmarksSet, pinnedEntryId]);
+      const options = {
+        letterFilter: activeTab === 'home' ? 'الكل' : selectedLetter,
+        searchScope: 'all',
+        onlyBookmarks: activeTab === 'bookmarks',
+        bookmarksSet
+      };
+      let candidates = currentDict.preparedEntries;
+      if (committedSearchQuery.trim()) {
+        const sqlCandidates = await searchDictionarySqlite(currentDict.id, committedSearchQuery, {
+          letterFilter: options.letterFilter,
+          bookmarks: options.onlyBookmarks ? [...bookmarksSet] : null,
+          limit: 1200
+        });
+          candidates = sqlCandidates.map(prepareEntryForSearch);
+      }
+      let results = smartSearchEntries(candidates, committedSearchQuery, options);
+      if (pinnedEntryId) {
+        const pinned = results.find((entry) => entry.id === pinnedEntryId)
+          || currentDict.preparedEntries.find((entry) => entry.id === pinnedEntryId);
+        if (pinned) results = [pinned, ...results.filter((entry) => entry.id !== pinnedEntryId)];
+      }
+      if (!cancelled) setFilteredEntries(results);
+    };
+    search().catch(() => {
+      if (!cancelled) {
+        setFilteredEntries(smartSearchEntries(currentDict.preparedEntries, committedSearchQuery, {
+          letterFilter: activeTab === 'home' ? 'الكل' : selectedLetter,
+          searchScope: 'all',
+          onlyBookmarks: activeTab === 'bookmarks',
+          bookmarksSet
+        }));
+      }
+    });
+    return () => { cancelled = true; };
+  }, [currentDict, hasCurrentDictionaryData, committedSearchQuery, selectedLetter, activeTab, bookmarksSet, pinnedEntryId]);
 
   useEffect(() => {
     const sentinel = loadMoreRef.current;
@@ -597,10 +796,6 @@ export default function App() {
       const targetDict =
         allDictionaries.find((d) => d.id === targetDictId) || currentDict || allDictionaries[0];
 
-      if (targetDictId !== selectedDictId) {
-        setSelectedDictId(targetDictId);
-      }
-
       let targetEntry = null;
       if (entryId && targetDict) {
         targetEntry = targetDict.preparedEntries.find((item) => item.id === entryId) || null;
@@ -615,31 +810,35 @@ export default function App() {
         }
       }
 
-      setSelectedLetter('الكل');
-      setActiveTab('dictionary');
       if (targetEntry) {
-        setPinnedEntryId(targetEntry.id);
-        setExpandedIds(new Set([targetEntry.id]));
-      } else if (entryId) {
-        setPinnedEntryId(entryId);
-        setExpandedIds(new Set([entryId]));
+        setReferenceModalStack((stack) => [...stack, { entry: targetEntry, dict: targetDict }]);
+        return;
       }
-
-      setSelectedFullEntryModal(null);
-      setAiSheetOpen(false);
-
-      if (typeof window !== 'undefined') {
-        setTimeout(() => {
-          document.getElementById(`entry-card-${targetEntry?.id || entryId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        }, 100);
-      }
-
-      showToast(targetEntry ? `عرض: ${targetEntry.term}` : `عرض: ${cleaned}`);
+      showToast(`لم يتم العثور على مدخل مطابق لـ "${cleaned}"`);
     },
     [allDictionaries, currentDict, selectedDictId, showToast]
   );
 
+  const openEntryInDictionary = useCallback((entry, dictionary) => {
+    if (!entry || !dictionary) return;
+    if (!dictionary.fullyLoaded) loadDictionary(dictionary.id).catch(() => {});
+    setSelectedDictId(dictionary.id);
+    setSelectedLetter('الكل');
+    setActiveTab('dictionary');
+    setPinnedEntryId(entry.id);
+    setExpandedIds(new Set([entry.id]));
+    setSelectedFullEntryModal(null);
+    setReferenceModalStack([]);
+    setAiSheetOpen(false);
+    window.setTimeout(() => {
+      document.getElementById(`entry-card-${entry.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 100);
+  }, [loadDictionary]);
+
   const stats = useMemo(() => computeBenchmarkStats(benchmarkLogs), [benchmarkLogs]);
+  const selectedFullEntryReferences = selectedFullEntryModal
+    ? extractCrossReferences(selectedFullEntryModal.entry.definition, selectedFullEntryModal.dict)
+    : [];
 
   const renderEntryCards = (entriesList) => {
     if (entriesList.length === 0) {
@@ -781,6 +980,8 @@ export default function App() {
                   <button
                     key={dict.id}
                     onClick={() => {
+                      window.scrollTo({ top: 0, behavior: 'smooth' });
+                      loadDictionary(dict.id).catch(() => {});
                       setSelectedDictId(dict.id);
                       setSelectedLetter('الكل');
                       setSearchQuery('');
@@ -803,7 +1004,7 @@ export default function App() {
                 <BookOpen className="h-4 w-4 text-amber-200" />
                 <span>{currentDict.category}</span>
                 <span className="rounded-full bg-white px-2.5 py-0.5 text-teal-900 tabular-nums">
-                  {currentDict.entries.length.toLocaleString('ar-IQ')} معنى
+                  {(currentDict.entryCount || currentDict.entries.length).toLocaleString('ar-IQ')} معنى
                 </span>
               </div>
             </div>
@@ -854,6 +1055,8 @@ export default function App() {
                 <button
                   key={dict.id}
                   onClick={() => {
+                    window.scrollTo({ top: 0, behavior: 'smooth' });
+                    loadDictionary(dict.id).catch(() => {});
                     setSelectedDictId(dict.id);
                     setSelectedLetter('الكل');
                     setSearchQuery('');
@@ -1017,7 +1220,7 @@ export default function App() {
             </div>
 
             {/* محتوى النافذة العائمة */}
-            <div className="p-4 overflow-y-auto space-y-4 flex-1 select-text">
+            <div ref={aiSheetContentRef} className="p-4 overflow-y-auto space-y-4 flex-1 select-text">
               {/* شريط فلاتر علوي (الكل، الفقهي، الأصولي، اللغوي) */}
               <div>
                 <div className="text-xs font-extrabold text-slate-500 dark:text-slate-400 mb-2">
@@ -1247,15 +1450,22 @@ export default function App() {
                 {cleanDisplayedText(selectedFullEntryModal.entry.definition)}
               </div>
 
-              <div className="flex flex-wrap gap-2 text-xs font-extrabold">
-                <span className="px-3 py-1 rounded-xl bg-teal-100 dark:bg-teal-950 text-teal-800 dark:text-teal-300">
-                </span>
-                {selectedFullEntryModal.entry.id && (
-                  <span className="px-3 py-1 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-mono">
-                    ID: {selectedFullEntryModal.entry.id}
-                  </span>
-                )}
-              </div>
+              {selectedFullEntryReferences.length > 0 && (
+                <div className="space-y-2">
+                  <h4 className="text-sm font-extrabold text-slate-700 dark:text-slate-200">المداخل المرتبطة</h4>
+                  <div className="flex flex-wrap gap-2">
+                    {selectedFullEntryReferences.map((reference) => (
+                      <button
+                        key={`ai-reference-${reference.entry.id}`}
+                        onClick={(e) => jumpToTerm(reference.target, selectedFullEntryModal.dict?.id, reference.entry.id, e)}
+                        className="rounded-xl bg-amber-100 px-3 py-2 text-xs font-bold text-amber-800 hover:bg-amber-200 dark:bg-amber-950/70 dark:text-amber-300"
+                      >
+                        {reference.verb}: {reference.target}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               <div className="grid grid-cols-2 gap-2.5 pt-2">
                 <button
@@ -1275,14 +1485,7 @@ export default function App() {
 
                 <button
                   type="button"
-                  onClick={(e) =>
-                    jumpToTerm(
-                      selectedFullEntryModal.entry.term,
-                      selectedFullEntryModal.dict?.id,
-                      selectedFullEntryModal.entry.id,
-                      e
-                    )
-                  }
+                  onClick={() => openEntryInDictionary(selectedFullEntryModal.entry, selectedFullEntryModal.dict)}
                   className="py-3.5 rounded-2xl bg-slate-800 dark:bg-slate-700 text-white font-extrabold text-sm flex items-center justify-center gap-1.5 shadow-md"
                 >
                   <BookOpen className="w-4 h-4" />
@@ -1293,6 +1496,80 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {referenceModalStack.map((referenceModal, index) => {
+        const referenceList = extractCrossReferences(referenceModal.entry.definition, referenceModal.dict);
+        const isTopModal = index === referenceModalStack.length - 1;
+        return (
+          <div
+            key={`${referenceModal.dict.id}-${referenceModal.entry.id}-${index}`}
+            className="fixed inset-0 flex items-center justify-center bg-black/55 p-4 backdrop-blur-sm"
+            style={{ zIndex: 70 + index }}
+            onClick={() => isTopModal && setReferenceModalStack((stack) => stack.slice(0, -1))}
+            role="presentation"
+          >
+            <section
+              role="dialog"
+              aria-modal="true"
+              aria-label={`مدخل ${referenceModal.entry.term}`}
+              onClick={(e) => e.stopPropagation()}
+              className="flex max-h-[82vh] w-full max-w-lg flex-col overflow-hidden rounded-3xl border-2 border-amber-400 bg-white shadow-2xl dark:bg-slate-900"
+            >
+              <header className="flex items-center justify-between bg-gradient-to-l from-teal-800 to-emerald-800 p-4 text-white">
+                <div>
+                  <span className="text-xs font-extrabold text-amber-300">{referenceModal.dict.category}</span>
+                  <h3 className="mt-0.5 text-xl font-extrabold">{referenceModal.entry.term}</h3>
+                </div>
+                <button
+                  onClick={() => setReferenceModalStack((stack) => stack.slice(0, -1))}
+                  className="rounded-full bg-white/15 p-2 hover:bg-white/25"
+                  aria-label="إغلاق المدخل المرتبط"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </header>
+              <div className="space-y-4 overflow-y-auto p-5">
+                <p
+                  style={{ fontSize: currentFont.defSize, lineHeight: currentFont.lineHeight }}
+                  className="rounded-2xl border border-slate-200 bg-slate-50 p-4 font-serif text-slate-900 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100"
+                >
+                  {cleanDisplayedText(referenceModal.entry.definition)}
+                </p>
+                {referenceList.length > 0 && (
+                  <div className="space-y-2">
+                    <h4 className="text-sm font-extrabold text-slate-700 dark:text-slate-200">مراجع هذا المدخل</h4>
+                    <div className="flex flex-wrap gap-2">
+                      {referenceList.map((reference) => (
+                        <button
+                          key={`${referenceModal.entry.id}-${reference.entry.id}`}
+                          onClick={(e) => jumpToTerm(reference.target, referenceModal.dict.id, reference.entry.id, e)}
+                          className="rounded-xl bg-amber-100 px-3 py-2 text-xs font-bold text-amber-800 hover:bg-amber-200 dark:bg-amber-950/70 dark:text-amber-300"
+                        >
+                          {reference.verb}: {reference.target}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                <div className="grid grid-cols-2 gap-2.5">
+                  <button
+                    onClick={(e) => handleCopy(referenceModal.entry, referenceModal.dict.category, e)}
+                    className="flex items-center justify-center gap-2 rounded-2xl bg-teal-600 py-3 font-extrabold text-white"
+                  >
+                    <Copy className="h-4 w-4" /> نسخ التعريف
+                  </button>
+                  <button
+                    onClick={() => openEntryInDictionary(referenceModal.entry, referenceModal.dict)}
+                    className="flex items-center justify-center gap-2 rounded-2xl bg-slate-800 py-3 font-extrabold text-white dark:bg-slate-700"
+                  >
+                    <BookOpen className="h-4 w-4" /> فتح في المعجم
+                  </button>
+                </div>
+              </div>
+            </section>
+          </div>
+        );
+      })}
 
       {/* نافذة ملخص أداء النماذج (Model Performance Summary Modal) */}
       {showStatsModal && (

@@ -105,6 +105,7 @@ export function prepareEntryForSearch(entry) {
     _normTerm: normTerm,
     _stemTerm: stemTerm,
     _normDef: normDef,
+    _normTermTokens: normTerm.split(/\s+/).filter(Boolean),
     _normSources: normSources
   };
 }
@@ -160,8 +161,22 @@ export function smartSearchEntries(entries, rawQuery, options = {}) {
     const normDef = entry._normDef ?? normalizeArabic(entry.definition);
     const rawTermClean = stripTashkeelOnly(entry.term);
     const rawTermTokens = rawTermClean.split(/[\s()،,/-]+/).filter(Boolean);
-    const normTermTokens = normTerm.split(/\s+/).filter(Boolean);
+    const normTermTokens = entry._normTermTokens || normTerm.split(/\s+/).filter(Boolean);
     const isReferralStub = /^(?:انظر|راجع|يراجع)\b/.test(stripTashkeelOnly(entry.definition));
+
+    // Rank matching headwords ahead of matches that occur only in definitions.
+    const titleTokenMatches = queryTokens.filter((token, index) =>
+      normTerm.includes(token) || (queryStems[index]?.length >= 2 && stemTerm.includes(queryStems[index]))
+    ).length;
+    const titleMatchLevel = normTerm === normQuery
+      ? 4
+      : normTerm.includes(normQuery)
+        ? 3
+        : titleTokenMatches === queryTokens.length && titleTokenMatches > 0
+          ? 2
+          : titleTokenMatches > 0
+            ? 1
+            : 0;
 
     let score = 0;
 
@@ -192,8 +207,7 @@ export function smartSearchEntries(entries, rawQuery, options = {}) {
 
     // 3. فحص كل كلمة من كلمات البحث (مع الجذور، المرادفات، والتسامح الإملائي)
     let matchedTokensCount = 0;
-    const termWords = normTerm.split(' ');
-    const defWords = normDef.split(' ');
+    const termWords = normTermTokens;
 
     for (let i = 0; i < queryTokens.length; i++) {
       const qToken = queryTokens[i];
@@ -201,11 +215,11 @@ export function smartSearchEntries(entries, rawQuery, options = {}) {
       let tokenMatched = false;
 
       if (normTerm.includes(qToken) || (qStem.length >= 2 && stemTerm.includes(qStem))) {
-        score += 45;
+        score += 180;
         tokenMatched = true;
       } else if (
         searchScope !== 'termOnly' &&
-        (defWords.includes(qToken) || defWords.some((dw) => dw.includes(qToken) || (qStem.length >= 3 && stemArabicWord(dw) === qStem)))
+        (normDef.includes(qToken) || (qStem.length >= 3 && normDef.includes(qStem)))
       ) {
         score += 35;
         tokenMatched = true;
@@ -214,7 +228,7 @@ export function smartSearchEntries(entries, rawQuery, options = {}) {
         tokenMatched = true;
       } else {
         // فحص التسامح الإملائي (Fuzzy Matching) مع كلمات المصطلح للكلمات الطويلة فقط (>= 4 أحرف)
-        if (qStem.length >= 4) {
+        if (matchedTokensCount === 0 && qStem.length >= 4) {
           for (const tw of termWords) {
             const dist = levenshteinDistance(stemArabicWord(tw), qStem);
             if (dist === 1) {
@@ -256,10 +270,12 @@ export function smartSearchEntries(entries, rawQuery, options = {}) {
     }
 
     if (score > 0) {
-      scoredResults.push({ entry, score });
+      scoredResults.push({ entry, score, titleMatchLevel });
     }
   }
 
-  scoredResults.sort((a, b) => b.score - a.score || a.entry.page - b.entry.page);
+  scoredResults.sort((a, b) =>
+    b.titleMatchLevel - a.titleMatchLevel || b.score - a.score || a.entry.page - b.entry.page
+  );
   return scoredResults.map((item) => item.entry);
 }

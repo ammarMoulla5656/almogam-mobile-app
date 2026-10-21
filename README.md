@@ -25,7 +25,8 @@ npm run android:sync
 
 ## ملفات البيانات
 
-- الملفات النهائية التي يستوردها التطبيق: `database/processed/unified_fiqhi.json` و`unified_usuli.json` و`unified_lughawi.json`.
+- قواعد SQLite التي يقرأها التطبيق مباشرة دون اتصال: `public/data/sqlite/fiqhi_main.sqlite` و`usuli_dict.sqlite` و`lughawi_dict.sqlite`.
+- ملفات JSON الموحدة في `database/processed/` هي مصادر البيانات التي تُبنى منها قواعد SQLite عبر `npm run data:sqlite`.
 - نسخ المصادر الأصلية: `database/original_sources/`.
 - أجزاء كتاب العين الأربعة، مع حذف المصطلحات المكررة عند الدمج.
 - ملفات تجهيز الفهرسة الدلالية: `database/vector_upload/fiqhi.txt` و`usuli.txt` و`lughawi.txt`.

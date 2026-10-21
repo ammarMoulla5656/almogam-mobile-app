@@ -195,21 +195,6 @@ for (const [key, dictionary] of Object.entries(dictionaries)) {
   await writeJson(`database/processed/unified_${key}.json`, dictionary);
 }
 
-const exportData = { version: 2, lastUpdated: new Date().toISOString(), dictionaries: Object.values(dictionaries) };
-await writeJson('database/app_active_data/dictionaries.json', exportData);
-await writeJson('src/data/dictionaries.json', exportData);
-await writeJson('database/processed/cleaned_entries.json', dictionaries.fiqhi.entries);
-await writeJson('database/processed/fiqhi_terms_complete.json', dictionaries.fiqhi.entries);
-await writeFile(resolve(root, 'database/processed/dictionaries.js'),
-  `window.ALMOGAM_INITIAL_DATA = ${JSON.stringify(exportData)};\nexport default window.ALMOGAM_INITIAL_DATA;\n`, 'utf8');
-
-const vectorDir = resolve(root, 'database/vector_upload');
-await mkdir(vectorDir, { recursive: true });
-for (const [key, dictionary] of Object.entries(dictionaries)) {
-  const label = key === 'fiqhi' ? 'المعجم الفقهي' : key === 'usuli' ? 'المعجم الأصولي' : 'المعجم اللغوي';
-  const content = dictionary.entries.map((entry) =>
-    `${label}\nالمصطلح: ${entry.term}${entry.aliases?.length ? `\nصيغ أخرى: ${entry.aliases.join('، ')}` : ''}\nالتعريف: ${entry.definition}`
-  ).join('\n\n');
-  await writeFile(resolve(vectorDir, `${key}.txt`), `${content}\n`, 'utf8');
-}
+// The app reads its compact SQLite databases; vector-search text files are
+// generated separately by scripts/prepare_vector_upload.mjs.
 console.log(JSON.stringify(stats, null, 2));
